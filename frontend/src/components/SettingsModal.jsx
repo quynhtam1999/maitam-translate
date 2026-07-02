@@ -8,6 +8,7 @@ import {
 
 const EMPTY = {
   qwen_base_url: "",
+  qwen_model: "",
   gemini_rpm_limit: 0,
   gemini_tpm_limit: 0,
   gemini_rpd_limit: 0,
@@ -45,6 +46,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
         setInfo(s);
         setForm({
           qwen_base_url: s.qwen_base_url || "",
+          qwen_model: s.qwen_model || "",
           gemini_rpm_limit: s.gemini_rpm_limit,
           gemini_tpm_limit: s.gemini_tpm_limit,
           gemini_rpd_limit: s.gemini_rpd_limit,
@@ -152,7 +154,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     : "Chưa lưu key";
   const qwenStatus = info?.qwen_api_key_set
     ? `Đã lưu ${info.qwen_api_key_masked}`
-    : "Chưa lưu key (sẽ dùng EMPTY)";
+    : "Chưa lưu key ModelScope";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -195,11 +197,11 @@ export default function SettingsModal({ open, onClose, onSaved }) {
               </label>
 
               <label className="field">
-                <span>Qwen endpoint</span>
+                <span>Qwen3 235B — API key ModelScope</span>
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
-                    placeholder={info?.qwen_api_key_set ? "Nhập key mới để thay thế" : "Tùy chọn; trống = EMPTY"}
+                    placeholder={info?.qwen_api_key_set ? "Nhập key mới để thay thế" : "Dán API key ModelScope (ms-...)"}
                     value={qwenKey}
                     onChange={(e) => setQwenKey(e.target.value)}
                     autoComplete="off"
@@ -210,7 +212,12 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                     </button>
                   )}
                 </div>
-                <span className="key-status">{qwenStatus}</span>
+                <span className="key-status">
+                  {qwenStatus} — lấy tại{" "}
+                  <a href="https://modelscope.ai" target="_blank" rel="noreferrer">
+                    modelscope.ai
+                  </a>
+                </span>
               </label>
 
               <label className="checkbox">
@@ -228,10 +235,24 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                   type="text"
                   value={form.qwen_base_url}
                   onChange={setField("qwen_base_url")}
-                  placeholder="http://localhost:8001/v1"
+                  placeholder="https://api-inference.modelscope.ai/v1"
                 />
                 <span className="key-status">
-                  Dùng endpoint /v1 của vLLM/SGLang; không dùng api-inference.modelscope.ai/v1.
+                  Endpoint OpenAI-compatible của ModelScope API-Inference (mặc định
+                  https://api-inference.modelscope.ai/v1).
+                </span>
+              </label>
+
+              <label className="field">
+                <span>Qwen — Tên model</span>
+                <input
+                  type="text"
+                  value={form.qwen_model}
+                  onChange={setField("qwen_model")}
+                  placeholder="Qwen/Qwen3-235B-A22B-Instruct-2507"
+                />
+                <span className="key-status">
+                  Mặc định Qwen/Qwen3-235B-A22B-Instruct-2507.
                 </span>
               </label>
             </section>

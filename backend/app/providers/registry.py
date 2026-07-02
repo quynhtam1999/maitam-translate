@@ -12,8 +12,8 @@ _PROVIDERS: dict[str, BaseProvider] = {
 
 _FREE_TIER_NOTE = {
     "qwen": (
-        "Cần Qwen Base URL của endpoint OpenAI-compatible tự triển khai "
-        "(vLLM/SGLang); API key có thể để trống/EMPTY."
+        "Dùng ModelScope API-Inference: cần API key ModelScope, Base URL và tên "
+        "model (nhập trong ⚙ Cài đặt)."
     ),
     "gemini": "Miễn phí trọn đời (giới hạn RPD/ngày)",
     "gemma": "Gemma 4 31B - miễn phí trọn đời (giới hạn RPD/ngày)",
@@ -34,7 +34,7 @@ def list_providers() -> list[ProviderInfo]:
             ProviderInfo(
                 name=name,
                 display_name=provider.display_name,
-                requires_key=name != "qwen",
+                requires_key=True,
                 key_configured=provider.is_configured(),
                 free_tier_note=_FREE_TIER_NOTE.get(name, ""),
             )

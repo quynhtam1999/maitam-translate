@@ -69,6 +69,7 @@ def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
                 gemini_key_enc  TEXT,
                 qwen_key_enc    TEXT,
                 qwen_base_url   TEXT,
+                qwen_model      TEXT,
                 updated_at      REAL NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -94,6 +95,8 @@ def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
         }
         if "qwen_base_url" not in columns:
             _db().execute("ALTER TABLE user_api_keys ADD COLUMN qwen_base_url TEXT")
+        if "qwen_model" not in columns:
+            _db().execute("ALTER TABLE user_api_keys ADD COLUMN qwen_model TEXT")
         _db().commit()
 
 
@@ -294,6 +297,7 @@ def update_api_keys(
     gemini_key: str | None = None,
     qwen_key: str | None = None,
     qwen_base_url: str | None = None,
+    qwen_model: str | None = None,
 ) -> None:
     now = time.time()
     sets: list[str] = ["updated_at = ?"]
@@ -307,6 +311,9 @@ def update_api_keys(
     if qwen_base_url is not None:
         sets.append("qwen_base_url = ?")
         params.append(qwen_base_url.strip() or None)
+    if qwen_model is not None:
+        sets.append("qwen_model = ?")
+        params.append(qwen_model.strip() or None)
     if len(sets) == 1:
         return
 
@@ -334,8 +341,14 @@ def get_provider_api_key(user_id: str, provider_name: str) -> str | None:
 def get_provider_options(user_id: str, provider_name: str) -> dict[str, str]:
     if provider_name != "qwen":
         return {}
+    options: dict[str, str] = {}
     base_url = get_qwen_base_url(user_id)
-    return {"qwen_base_url": base_url} if base_url else {}
+    if base_url:
+        options["qwen_base_url"] = base_url
+    model = get_qwen_model(user_id)
+    if model:
+        options["qwen_model"] = model
+    return options
 
 
 def get_qwen_base_url(user_id: str) -> str:
@@ -344,6 +357,14 @@ def get_qwen_base_url(user_id: str) -> str:
             "SELECT qwen_base_url FROM user_api_keys WHERE user_id = ?", (user_id,)
         ).fetchone()
     return str(row["qwen_base_url"] or "") if row else ""
+
+
+def get_qwen_model(user_id: str) -> str:
+    with _lock:
+        row = _db().execute(
+            "SELECT qwen_model FROM user_api_keys WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return str(row["qwen_model"] or "") if row else ""
 
 
 def get_api_keys(user_id: str) -> dict[str, str]:

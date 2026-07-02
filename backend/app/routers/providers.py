@@ -6,7 +6,6 @@ from ..core.auth import CurrentUser
 from ..core.config import get_settings
 from ..models.provider import ProviderInfo, QuotaSnapshot
 from ..providers.quota_tracker import quota_tracker
-from ..providers.qwen import is_supported_qwen_base_url
 from ..providers.registry import get_provider, list_providers
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
@@ -24,7 +23,10 @@ async def get_providers(current_user: CurrentUser):
                 auth_store.get_qwen_base_url(current_user["id"])
                 or get_settings().qwen_base_url
             )
-            info.key_configured = is_supported_qwen_base_url(qwen_base_url)
+            # ModelScope API-Inference cần cả API key lẫn Base URL.
+            info.key_configured = bool(key_status["qwen"]["set"]) and bool(
+                qwen_base_url.strip()
+            )
     return infos
 
 

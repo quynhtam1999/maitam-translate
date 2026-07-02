@@ -16,6 +16,7 @@ class SettingsResponse(BaseModel):
     qwen_api_key_set: bool = False
     qwen_api_key_masked: str = ""
     qwen_base_url: str = ""
+    qwen_model: str = ""
 
     gemini_rpm_limit: int = 0
     gemini_tpm_limit: int = 0
@@ -38,6 +39,7 @@ class SettingsUpdateRequest(BaseModel):
     gemini_api_key: str | None = None
     qwen_api_key: str | None = None
     qwen_base_url: str | None = None
+    qwen_model: str | None = None
 
     gemini_rpm_limit: int | None = None
     gemini_tpm_limit: int | None = None

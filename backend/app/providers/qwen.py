@@ -1,6 +1,11 @@
-"""Provider Qwen qua endpoint OpenAI-compatible tự triển khai."""
+"""Provider Qwen qua ModelScope API-Inference (endpoint OpenAI-compatible).
+
+Ba trường cấu hình (người dùng tự nhập trong ⚙ Cài đặt):
+  - API key ModelScope (lấy ở https://modelscope.ai)
+  - Base URL (mặc định https://api-inference.modelscope.ai/v1)
+  - Tên model (mặc định Qwen/Qwen3-235B-A22B-Instruct-2507)
+"""
 import json
-from urllib.parse import urlparse
 
 import httpx
 
@@ -9,29 +14,23 @@ from ..models.glossary import GlossaryEntry
 from .base import (
     BaseProvider,
     BatchTranslationResult,
+    ProgressCallback,
     ProviderQuotaError,
     RateLimits,
     TranslationResult,
+    count_streamed_json_items,
     parse_batch_translations,
 )
 from .prompt import build_batch_system_prompt, build_system_prompt
 
 _DEFAULT_API_KEY = "EMPTY"
-_UNSUPPORTED_MODELSCOPE_HOSTED_API_BASE = "https://api-inference.modelscope.ai/v1"
-_SELF_HOSTED_HELP = (
-    "Model Qwen3-235B-A22B-Instruct-2507 trên ModelScope không bật hosted API "
-    "inference. Hãy chạy vLLM/SGLang theo model card rồi nhập Qwen Base URL "
-    "OpenAI-compatible, ví dụ http://localhost:8001/v1. API key có thể để trống "
-    "để dùng EMPTY."
-)
+_DEFAULT_BASE_URL = "https://api-inference.modelscope.ai/v1"
+_DEFAULT_MODEL = "Qwen/Qwen3-235B-A22B-Instruct-2507"
 
 
 class QwenProvider(BaseProvider):
     name = "qwen"
-    display_name = "Qwen3 235B (OpenAI-compatible)"
-
-    def __init__(self, model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"):
-        self.model = model
+    display_name = "Qwen3 235B (ModelScope)"
 
     def is_configured(self) -> bool:
         return is_supported_qwen_base_url(get_settings().qwen_base_url)
@@ -55,6 +54,7 @@ class QwenProvider(BaseProvider):
     ) -> TranslationResult:
         system_prompt = build_system_prompt(target_lang, glossary_hints)
         base_url, key = _resolve_connection(api_key, provider_options)
+        model = resolve_qwen_model(provider_options)
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {key}",
@@ -62,7 +62,7 @@ class QwenProvider(BaseProvider):
             "Content-Type": "application/json",
         }
         body = {
-            "model": self.model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
@@ -108,6 +108,7 @@ class QwenProvider(BaseProvider):
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
         provider_options: dict | None = None,
+        progress_cb: ProgressCallback | None = None,
     ) -> BatchTranslationResult:
         if not texts:
             return BatchTranslationResult(texts=[])
@@ -115,6 +116,7 @@ class QwenProvider(BaseProvider):
         system_prompt = build_batch_system_prompt(target_lang, glossary_hints)
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
         base_url, key = _resolve_connection(api_key, provider_options)
+        model = resolve_qwen_model(provider_options)
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {key}",
@@ -122,7 +124,7 @@ class QwenProvider(BaseProvider):
             "Content-Type": "application/json",
         }
         body = {
-            "model": self.model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -133,30 +135,23 @@ class QwenProvider(BaseProvider):
         if max_output_tokens > 0:
             body["max_tokens"] = max_output_tokens
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, headers=headers, json=body)
+        # Cùng MỘT request; nếu có progress_cb thì bật stream để đếm số đoạn xong.
+        if progress_cb is not None:
+            raw, usage = await _stream_chat_completions(url, headers, body, progress_cb)
+        else:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(url, headers=headers, json=body)
+            _raise_qwen_error_status(resp)
+            data = resp.json()
+            provider_error = _provider_error_message(data)
+            if provider_error:
+                raise RuntimeError(f"Qwen API lỗi: {provider_error}")
+            raw = _extract_response_text(data)
+            usage = _extract_usage(data)
 
-        if resp.status_code == 429:
-            raise ProviderQuotaError(
-                f"Qwen endpoint hết quota / vượt giới hạn tốc độ: {resp.text}"
-            )
-        if resp.status_code >= 400:
-            data = _safe_json(resp)
-            message = _error_message(data) if data else resp.text
-            raise RuntimeError(f"Qwen API lỗi ({resp.status_code}): {message}")
-
-        data = resp.json()
-        provider_error = _provider_error_message(data)
-        if provider_error:
-            raise RuntimeError(f"Qwen API lỗi: {provider_error}")
-
-        raw = _extract_response_text(data)
         if not raw:
-            raise RuntimeError(
-                f"Qwen không trả về kết quả hợp lệ (keys={_top_level_keys(data)})"
-            )
+            raise RuntimeError("Qwen không trả về kết quả hợp lệ")
 
-        usage = _extract_usage(data)
         return BatchTranslationResult(
             texts=parse_batch_translations(raw, len(texts)),
             input_tokens=usage["input_tokens"],
@@ -166,28 +161,32 @@ class QwenProvider(BaseProvider):
 
 def resolve_qwen_base_url(provider_options: dict | None = None) -> str:
     settings = get_settings()
-    return ((provider_options or {}).get("qwen_base_url") or settings.qwen_base_url).strip()
+    return (
+        (provider_options or {}).get("qwen_base_url")
+        or settings.qwen_base_url
+        or _DEFAULT_BASE_URL
+    ).strip()
+
+
+def resolve_qwen_model(provider_options: dict | None = None) -> str:
+    settings = get_settings()
+    return (
+        (provider_options or {}).get("qwen_model")
+        or getattr(settings, "qwen_model", "")
+        or _DEFAULT_MODEL
+    ).strip()
 
 
 def is_supported_qwen_base_url(base_url: str) -> bool:
-    base_url = base_url.strip()
-    return bool(base_url) and not is_unsupported_modelscope_hosted_api(base_url)
-
-
-def is_unsupported_modelscope_hosted_api(base_url: str) -> bool:
-    parsed = urlparse(base_url.strip())
-    normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/").lower()
-    return normalized == _UNSUPPORTED_MODELSCOPE_HOSTED_API_BASE
+    return bool((base_url or "").strip())
 
 
 def validate_qwen_base_url(base_url: str) -> None:
-    if not base_url.strip():
+    if not (base_url or "").strip():
         raise RuntimeError(
-            "Chưa có Qwen Base URL. Hãy nhập endpoint OpenAI-compatible của "
-            "server vLLM/SGLang đang chạy model Qwen3-235B-A22B-Instruct-2507."
+            "Chưa có Qwen Base URL. Nhập endpoint OpenAI-compatible của ModelScope "
+            "(mặc định https://api-inference.modelscope.ai/v1)."
         )
-    if is_unsupported_modelscope_hosted_api(base_url):
-        raise RuntimeError(_SELF_HOSTED_HELP)
 
 
 def _resolve_connection(
@@ -198,6 +197,68 @@ def _resolve_connection(
     validate_qwen_base_url(base_url)
     key = (api_key or settings.qwen_api_key or _DEFAULT_API_KEY).strip()
     return base_url, key or _DEFAULT_API_KEY
+
+
+async def _stream_chat_completions(
+    url: str, headers: dict, body: dict, progress_cb: ProgressCallback
+) -> tuple[str, dict[str, int]]:
+    """Stream chat/completions (SSE) và báo tiến trình theo số đoạn dịch xong.
+
+    Cùng một request như bản không stream — chỉ thêm stream=true để nhận dần.
+    """
+    stream_body = dict(body)
+    stream_body["stream"] = True
+    stream_body["stream_options"] = {"include_usage": True}
+
+    pieces: list[str] = []
+    usage_raw: dict = {}
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        async with client.stream("POST", url, headers=headers, json=stream_body) as resp:
+            if resp.status_code >= 400:
+                await resp.aread()
+                _raise_qwen_error_status(resp)
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data_str = line[len("data:"):].strip()
+                if not data_str or data_str == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(data_str)
+                except ValueError:
+                    continue
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    piece = delta.get("content")
+                    if piece:
+                        pieces.append(piece)
+                        progress_cb(count_streamed_json_items("".join(pieces)))
+                candidate = chunk.get("usage")
+                if isinstance(candidate, dict):
+                    usage_raw = candidate
+
+    raw = "".join(pieces)
+    usage = {
+        "input_tokens": _int_from_keys(
+            usage_raw, ("prompt_tokens", "input_tokens", "promptTokens", "inputTokens")
+        ),
+        "output_tokens": _int_from_keys(
+            usage_raw, ("completion_tokens", "output_tokens", "completionTokens", "outputTokens")
+        ),
+    }
+    return raw, usage
+
+
+def _raise_qwen_error_status(resp: httpx.Response) -> None:
+    if resp.status_code == 429:
+        raise ProviderQuotaError(
+            f"Qwen endpoint hết quota / vượt giới hạn tốc độ: {resp.text}"
+        )
+    if resp.status_code >= 400:
+        data = _safe_json(resp)
+        message = _error_message(data) if data else resp.text
+        raise RuntimeError(f"Qwen API lỗi ({resp.status_code}): {message}")
 
 
 def _error_message(data: dict) -> str:

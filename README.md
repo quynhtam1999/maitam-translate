@@ -3,20 +3,22 @@
 Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **tiếng Việt**,
 **giữ nguyên bố cục trang gốc** (ảnh, bảng, chia cột — chỉ thay chữ tại chỗ), và dịch
 **văn bản dán tay**. Engine dịch đa nhà cung cấp: **Gemini/Gemma 4 31B** (Google AI Studio) và
-**Qwen3 235B** qua endpoint OpenAI-compatible tự triển khai (vLLM/SGLang).
+**Qwen3 235B** qua **ModelScope API-Inference** (endpoint OpenAI-compatible, server quốc tế `.ai`).
 
 Đây là bản web của phần mềm desktop cùng tên (Python/Tkinter, đóng gói .exe). Kỹ thuật
 giữ bố cục dùng **overlay PyMuPDF** (xóa chữ gốc tại chỗ + chèn bản dịch đè lên, tự co
 cỡ chữ cho vừa).
 
-## Trạng thái hiện tại (cập nhật 2026-07-02)
+## Trạng thái hiện tại (cập nhật 2026-07-03)
 
 ✅ **Tính năng chính đã có**
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
   có cache theo user để tiếp tục dịch khi hết quota, đổi model hoặc tắt/mở lại app.
+- Thanh tiến trình real-time: job báo từng giai đoạn (bóc tách cấu trúc PDF → đang dịch → dựng file PDF)
+  và cập nhật "đang dịch X/N đoạn (Z%)" theo thời gian thực nhờ **stream** phản hồi provider — **không tốn thêm request**.
 - Dịch văn bản dán tay bằng 1 request cho mỗi lần gửi, giúp RPD không thể thấp hơn nữa ở luồng văn bản.
-- Provider thật: Gemini, Gemma 4 31B qua Google AI Studio và Qwen3 235B qua endpoint
-  OpenAI-compatible tự triển khai. Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
+- Provider thật: Gemini, Gemma 4 31B qua Google AI Studio và Qwen3 235B qua **ModelScope API-Inference**
+  (OpenAI-compatible). Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
 - PDF overlay bằng PyMuPDF: bóc chữ, xóa chữ gốc tại chỗ, chèn bản dịch, hỗ trợ tài liệu 2 cột,
   giữ ảnh/biểu đồ và tách bảng vector theo cell/dòng để hạn chế vỡ bố cục.
 - Ảnh/biểu đồ chưa OCR nên không dịch chữ nằm trong ảnh; caption và chữ thật ngoài vùng ảnh vẫn được dịch.
@@ -31,8 +33,8 @@ cỡ chữ cho vừa).
 - API key Gemini/Qwen lưu riêng theo từng tài khoản trong SQLite
   (`backend/storage/cache/auth.db`), mã hóa at-rest bằng AES-GCM với secret server-side
   (`AUTH_SECRET_KEY` hoặc `auth_secret.key`). Backend chỉ trả trạng thái/masked key, không trả key gốc.
-- Bảng **Cài đặt** cho phép nhập/xóa API key theo tài khoản, Qwen Base URL theo tài khoản,
-  xem thống kê cache/job và xóa cache/job riêng của user.
+- Bảng **Cài đặt** cho phép nhập/xóa API key theo tài khoản, cấu hình Qwen theo tài khoản
+  (API key ModelScope + Base URL + tên model), xem thống kê cache/job và xóa cache/job riêng của user.
 
 ✅ **Tối ưu RPD mới**
 - Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma 4 31B, Qwen; các field này ghi
@@ -41,25 +43,28 @@ cỡ chữ cho vừa).
   `Max token/request × 0.9`; không còn trần cứng 200 đoạn/request hoặc 200.000 token/request.
 - Provider set giới hạn đầu ra khi gọi API (`generationConfig.maxOutputTokens` cho Gemini/Gemma 4 31B,
   `max_tokens` cho Qwen), giúp batch lớn ít bị cắt cụt JSON hơn.
+- Dịch PDF **stream** phản hồi provider (SSE) để cập nhật tiến trình theo từng đoạn dịch xong ngay trong
+  lúc nhận — **vẫn đúng 1 request cho mỗi batch**, không đánh đổi RPD để lấy thanh tiến trình real-time.
 - Dịch văn bản dán tay vẫn giữ 1 request/lần gửi nhưng cũng hưởng lợi từ giới hạn output mới.
 
 ✅ **Kiểm tra gần nhất**
-- `backend/.venv/Scripts/python.exe -m compileall backend/app`: pass.
-- Script kiểm tra batching giả lập: tăng TPM/Max token làm số batch giảm rõ rệt, batch nhiều item
-  không vượt ngân sách output.
+- `python -m compileall backend/app`: pass.
+- Test tầng provider chạy thật với API key thật: Qwen3 235B (ModelScope) và Gemini dịch được cả đoạn đơn
+  lẫn batch; đường **stream** báo tiến trình tăng dần đúng số đoạn xong trong **1 request**; token in/out
+  đọc được từ phản hồi (`include_usage` hoạt động trên ModelScope).
+- Bộ đếm object JSON đang stream: unit test qua các mốc partial, xử lý đúng dấu ngoặc nằm trong chuỗi.
 - `npm run build` trong `frontend/`: pass.
-- `git diff --check`: pass.
 
 ⚠️ **Chưa kiểm thử lại trong lượt cập nhật này**
-- Chưa chạy E2E PDF/text với API key thật và file PDF thật sau tối ưu RPD. Khi có key và file test,
-  cần xác nhận job về `done`, PDF tải được, bố cục giữ ổn và `rpd_used` giảm so với cấu hình cũ.
+- Chưa chạy E2E một file PDF thật qua giao diện (upload → job `done` → tải PDF, kiểm bố cục) sau khi thêm
+  stream/giai đoạn; các kiểm thử ở tầng provider đã pass.
 
 ### Model Qwen đang dùng
-`Qwen/Qwen3-235B-A22B-Instruct-2507` từ ModelScope. Model card hiện báo không bật hosted
-API inference (`SupportApiInference=false`), nên app không gọi mặc định vào
-`https://api-inference.modelscope.ai/v1` nữa. Hãy chạy model bằng vLLM/SGLang để tạo endpoint
-OpenAI-compatible rồi nhập `QWEN_BASE_URL` / Qwen Base URL, ví dụ `http://localhost:8001/v1`.
-Nếu endpoint không yêu cầu khóa, có thể để trống API key; backend sẽ gửi `EMPTY` theo mẫu Qwen-Agent.
+Mặc định `Qwen/Qwen3-235B-A22B-Instruct-2507` qua **ModelScope API-Inference** (server quốc tế
+`https://api-inference.modelscope.ai/v1`). Cấu hình gồm **3 trường** (nhập trong ⚙ Cài đặt, hoặc đặt sẵn
+trong `.env`): **API key ModelScope** (lấy ở [modelscope.ai](https://modelscope.ai), dạng `ms-...`),
+**Base URL** và **tên model** — cả ba đều sửa được để đổi sang model ModelScope khác. Khác Gemini/Gemma,
+Qwen **bắt buộc phải có API key** thì mới dịch được.
 
 ### Cách xử lý quota
 
@@ -72,6 +77,8 @@ Nếu endpoint không yêu cầu khóa, có thể để trống API key; backend
   và **Max token/request** của từng model. TPM giữ batch trong ngân sách phút, còn Max token/request được
   truyền xuống API (`maxOutputTokens`/`max_tokens`) để hạn chế phản hồi bị cắt cụt, nhờ đó giảm số request
   và tiết kiệm RPD.
+- Trong lúc dịch batch, backend **stream** phản hồi (SSE) và đếm số đoạn đã dịch xong để đẩy tiến trình
+  real-time ra frontend **mà không tách nhỏ request** — RPD giữ nguyên như khi gộp batch tối đa.
 
 ## Kiến trúc
 
@@ -170,8 +177,8 @@ Router `auth` xử lý đăng nhập/đăng xuất/session/đổi mật khẩu, 
 tài khoản + đặt lại mật khẩu hộ user; logic tài khoản/mật khẩu/mã hóa key nằm trong
 `core/auth_store.py`. Frontend gọi `POST /api/auth/change-password` qua modal riêng
 `ChangePasswordModal` (nút cạnh Đăng xuất), tách khỏi bảng Cài đặt. Router `settings`
-(backend) + `SettingsModal` (frontend) đọc/ghi API key mã hóa theo tài khoản, Qwen Base URL
-theo tài khoản, và dọn cache/job của user hiện tại; **giới hạn quota và Max token/request chỉ admin sửa được**
+(backend) + `SettingsModal` (frontend) đọc/ghi API key mã hóa theo tài khoản, cấu hình Qwen
+theo tài khoản (Base URL + tên model), và dọn cache/job của user hiện tại; **giới hạn quota và Max token/request chỉ admin sửa được**
 (ghi vào `.env`). `services/user_data.py` gom logic xóa toàn bộ dữ liệu của một user (dùng khi
 admin xóa tài khoản, hoặc user tự dọn cache/job). Ở gốc còn `start.bat` để khởi động nhanh cả
 hai server.
@@ -195,7 +202,7 @@ hai server.
 | POST | `/api/text/translate` | Dịch văn bản dán tay |
 | GET | `/api/providers` | Danh sách mô hình + trạng thái key của user hiện tại |
 | GET/POST | `/api/glossary` | Xem / tải lên từ điển thuật ngữ (CSV) theo user |
-| GET/PUT | `/api/settings` | Xem / cập nhật API key và Qwen Base URL theo user; quota và Max token/request chỉ admin sửa |
+| GET/PUT | `/api/settings` | Xem / cập nhật API key, Qwen Base URL + tên model theo user; quota và Max token/request chỉ admin sửa |
 | POST | `/api/settings/cache/clear` | Xóa cache bản dịch của user hiện tại |
 | POST | `/api/settings/jobs/clear` | Xóa lịch sử job + file PDF của user hiện tại |
 

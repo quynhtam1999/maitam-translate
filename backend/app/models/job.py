@@ -15,6 +15,9 @@ class JobStatus(str, Enum):
 
 
 class JobProgress(BaseModel):
+    # phase: "" | "extracting" | "translating" | "rendering" — để frontend hiện
+    # thông báo giai đoạn (bóc tách PDF / đang dịch / dựng file) theo thời gian thực.
+    phase: str = ""
     segments_total: int = 0
     segments_translated: int = 0
     current_page: int = 0

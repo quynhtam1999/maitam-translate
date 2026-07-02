@@ -14,6 +14,9 @@ from .pdf_overlay import TextSegment
 from ..providers.base import BaseProvider, ProviderQuotaError
 from ..providers.quota_tracker import quota_tracker
 
+# Trần số đoạn/batch chỉ là chặn an toàn. Việc gộp tối đa để GIẢM số request/ngày
+# (RPD) vẫn giữ nguyên — tiến trình real-time đến từ STREAM phản hồi (đếm số đoạn
+# đã dịch xong trong lúc nhận), KHÔNG phải từ việc chia nhỏ batch.
 _MAX_BATCH_ITEMS = 2000
 _INPUT_BATCH_HEADROOM = 0.8
 _OUTPUT_BATCH_HEADROOM = 0.9
@@ -51,11 +54,18 @@ class Translator:
         self.quota_scope = quota_scope
         self.provider_options = provider_options or {}
 
-    async def translate_one(self, text: str, target_lang: str = "vi", api_key: str | None = None) -> str:
+    async def translate_one(
+        self,
+        text: str,
+        target_lang: str = "vi",
+        api_key: str | None = None,
+        force_retranslate: bool = False,
+    ) -> str:
         """Dịch một đoạn (dùng cho tab văn bản dán tay và cho từng segment)."""
-        cached = self.cache.get(text, target_lang)
-        if cached is not None:
-            return cached
+        if not force_retranslate:
+            cached = self.cache.get(text, target_lang)
+            if cached is not None:
+                return cached
 
         prepared = apply_glossary_pre(text, self.glossary)
         estimated_tokens = _estimate_total_tokens(prepared)
@@ -86,6 +96,7 @@ class Translator:
         target_lang: str = "vi",
         on_progress=None,
         api_key: str | None = None,
+        force_retranslate: bool = False,
     ) -> dict[str, str]:
         """Trả về ánh xạ block_id -> bản dịch.
 
@@ -103,13 +114,14 @@ class Translator:
         total = len(unique_texts)
         done = 0
         for text in unique_texts:
-            cached = self.cache.get(text, target_lang)
-            if cached is not None:
-                text_to_translation[text] = cached
-                done += 1
-                if on_progress:
-                    on_progress(done, total)
-                continue
+            if not force_retranslate:
+                cached = self.cache.get(text, target_lang)
+                if cached is not None:
+                    text_to_translation[text] = cached
+                    done += 1
+                    if on_progress:
+                        on_progress(done, total)
+                    continue
 
             prepared = apply_glossary_pre(text, self.glossary)
             pending.append(
@@ -127,12 +139,17 @@ class Translator:
             estimated_tokens = _estimate_batch_total_tokens(batch)
 
             await self._wait_for_quota_window(estimated_tokens)
+
+            # Tiến trình real-time: provider stream phản hồi và gọi progress_cb với
+            # số đoạn đã dịch xong TRONG batch này (không tốn thêm request/RPD).
+            progress_cb = _make_batch_progress_cb(on_progress, done, len(batch), total)
             result = await self.provider.translate_batch(
                 prepared_texts,
                 target_lang,
                 self.glossary,
                 api_key=api_key,
                 provider_options=self.provider_options,
+                progress_cb=progress_cb,
             )
 
             input_tokens = result.input_tokens
@@ -148,8 +165,8 @@ class Translator:
                 self.cache.set(original, target_lang, final, provider_used=self.provider.name)
                 text_to_translation[original] = final
                 done += 1
-                if on_progress:
-                    on_progress(done, total)
+            if on_progress:
+                on_progress(done, total)
 
         return {seg.block_id: text_to_translation.get(seg.text, seg.text) for seg in segments}
 
@@ -213,6 +230,28 @@ class Translator:
             if wait_seconds <= 0:
                 return
             await asyncio.sleep(wait_seconds)
+
+
+def _make_batch_progress_cb(on_progress, base_done: int, batch_len: int, total: int):
+    """Bọc callback stream: nhận số đoạn xong trong batch -> báo tiến trình toàn cục.
+
+    Chỉ báo khi số đếm tăng và không vượt quá kích thước batch (số đếm từ JSON
+    đang stream chỉ là ước lượng; con số chính xác được chốt lại sau khi batch xong).
+    """
+    if on_progress is None:
+        return None
+
+    last_reported = 0
+
+    def cb(items_done_in_batch: int) -> None:
+        nonlocal last_reported
+        capped = max(0, min(items_done_in_batch, batch_len))
+        if capped <= last_reported:
+            return
+        last_reported = capped
+        on_progress(min(base_done + capped, total), total)
+
+    return cb
 
 
 def _estimate_total_tokens(text: str) -> int:

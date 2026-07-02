@@ -31,6 +31,11 @@ async def translate_text(req: TextTranslateRequest, current_user: CurrentUser):
             validate_qwen_base_url(resolve_qwen_base_url(provider_options))
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        if not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Chưa lưu API key ModelScope cho Qwen trong tài khoản.",
+            )
     elif not api_key:
         raise HTTPException(
             status_code=400,

@@ -9,9 +9,11 @@ from ..models.glossary import GlossaryEntry
 from .base import (
     BaseProvider,
     BatchTranslationResult,
+    ProgressCallback,
     ProviderQuotaError,
     RateLimits,
     TranslationResult,
+    count_streamed_json_items,
     parse_batch_translations,
 )
 from .prompt import build_batch_system_prompt, build_system_prompt
@@ -98,6 +100,7 @@ class GeminiProvider(BaseProvider):
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
         provider_options: dict | None = None,
+        progress_cb: ProgressCallback | None = None,
     ) -> BatchTranslationResult:
         if not texts:
             return BatchTranslationResult(texts=[])
@@ -108,7 +111,6 @@ class GeminiProvider(BaseProvider):
 
         system_prompt = build_batch_system_prompt(target_lang, glossary_hints)
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
-        url = f"{_API_BASE}/{self.model}:generateContent"
         body = {
             "systemInstruction": {"parts": [{"text": system_prompt}]},
             "contents": [
@@ -126,17 +128,112 @@ class GeminiProvider(BaseProvider):
         if max_output_tokens > 0:
             body["generationConfig"]["maxOutputTokens"] = max_output_tokens
 
-        resp = await _post_generate_content(url, api_key, body, timeout=120.0)
-        _raise_for_error(resp, self.display_name)
+        # Cùng MỘT request; chỉ khác là stream để đếm số đoạn xong -> tiến trình real-time.
+        if progress_cb is not None:
+            raw, usage = await self._stream_batch(api_key, body, progress_cb)
+        else:
+            resp = await _post_generate_content(
+                f"{_API_BASE}/{self.model}:generateContent", api_key, body, timeout=120.0
+            )
+            _raise_for_error(resp, self.display_name)
+            data = resp.json()
+            raw = _extract_candidate_text(data, self.display_name)
+            usage = data.get("usageMetadata", {})
 
-        data = resp.json()
-        raw = _extract_candidate_text(data, self.display_name)
-        usage = data.get("usageMetadata", {})
         return BatchTranslationResult(
             texts=parse_batch_translations(raw, len(texts)),
             input_tokens=usage.get("promptTokenCount", 0),
             output_tokens=usage.get("candidatesTokenCount", 0),
         )
+
+    async def _stream_batch(
+        self, api_key: str, body: dict, progress_cb: ProgressCallback
+    ) -> tuple[str, dict]:
+        """Gọi streamGenerateContent (SSE), gộp text và báo tiến trình theo số đoạn xong.
+
+        Nếu stream trả về rỗng bất thường -> lùi về generateContent thường (1 request).
+        """
+        url = f"{_API_BASE}/{self.model}:streamGenerateContent"
+        raw, usage, resp = await _stream_generate_content(
+            url, api_key, body, timeout=180.0, progress_cb=progress_cb
+        )
+        _raise_for_error(resp, self.display_name)
+        if not raw:
+            resp = await _post_generate_content(
+                f"{_API_BASE}/{self.model}:generateContent", api_key, body, timeout=120.0
+            )
+            _raise_for_error(resp, self.display_name)
+            data = resp.json()
+            raw = _extract_candidate_text(data, self.display_name)
+            usage = data.get("usageMetadata", {})
+        return raw, usage
+
+
+async def _stream_generate_content(
+    url: str,
+    api_key: str,
+    body: dict,
+    timeout: float,
+    progress_cb: ProgressCallback,
+) -> tuple[str, dict, httpx.Response]:
+    """Stream SSE từ streamGenerateContent.
+
+    Trả về (text_đầy_đủ, usageMetadata, response). Gọi progress_cb theo số object
+    JSON đã đóng. Retry khi lỗi tạm thời/đứt kết nối lúc THIẾT LẬP stream (chưa nhận
+    dữ liệu) — không tăng request trong trường hợp thành công.
+    """
+    params = {"key": api_key, "alt": "sse"}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(len(_RETRY_DELAYS_SECONDS) + 1):
+            pieces: list[str] = []
+            usage: dict = {}
+            try:
+                async with client.stream("POST", url, params=params, json=body) as resp:
+                    if resp.status_code >= 400:
+                        await resp.aread()
+                        if (
+                            resp.status_code in _TRANSIENT_STATUS_CODES
+                            and attempt < len(_RETRY_DELAYS_SECONDS)
+                        ):
+                            await asyncio.sleep(_retry_delay_seconds(resp, attempt))
+                            continue
+                        return "", {}, resp
+
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        if not data_str or data_str == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(data_str)
+                        except ValueError:
+                            continue
+                        piece = _chunk_text(chunk)
+                        if piece:
+                            pieces.append(piece)
+                            progress_cb(count_streamed_json_items("".join(pieces)))
+                        meta = chunk.get("usageMetadata")
+                        if isinstance(meta, dict):
+                            usage = meta
+                    return "".join(pieces), usage, resp
+            except httpx.TransportError as exc:
+                if attempt >= len(_RETRY_DELAYS_SECONDS):
+                    raise RuntimeError(
+                        f"Không kết nối được Google AI Studio API sau {attempt + 1} lần thử: {exc}"
+                    ) from exc
+                await asyncio.sleep(_RETRY_DELAYS_SECONDS[attempt])
+
+    raise RuntimeError("Không nhận được phản hồi từ Google AI Studio API")
+
+
+def _chunk_text(chunk: dict) -> str:
+    candidates = chunk.get("candidates") or []
+    if not candidates:
+        return ""
+    parts = candidates[0].get("content", {}).get("parts", [])
+    return "".join(str(p.get("text", "")) for p in parts if isinstance(p, dict))
 
 
 async def _post_generate_content(

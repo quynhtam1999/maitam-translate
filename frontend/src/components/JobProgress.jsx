@@ -27,10 +27,20 @@ export default function JobProgress({ status, onResumed }) {
   if (!status) return null;
 
   const { progress = {} } = status;
+  const phase = progress.phase || "";
   const total = progress.segments_total || 0;
   const done = progress.segments_translated || 0;
   const percent = total ? Math.round((done / total) * 100) : 0;
   const isDailyLimit = /RPD|giới hạn ngày/i.test(status.error || "");
+  const isActive = status.status === "running" || status.status === "queued";
+  const isTranslating = phase === "translating" && total > 0;
+
+  const phaseLabel = () => {
+    if (phase === "extracting") return "Đang bóc tách cấu trúc PDF...";
+    if (phase === "rendering") return "Đang chèn bản dịch và tạo file PDF...";
+    if (isTranslating) return `Đang dịch ${done}/${total} đoạn (${percent}%)`;
+    return "Đang chuẩn bị...";
+  };
 
   const canResume = newProvider && providers.some((p) => p.name === newProvider && p.key_configured);
 
@@ -46,14 +56,20 @@ export default function JobProgress({ status, onResumed }) {
         {isDailyLimit ? "Đã hết giới hạn ngày của model này" : STATUS_LABEL[status.status] || status.status}
       </p>
 
-      {(status.status === "running" || status.status === "queued") && total > 0 && (
+      {isActive && (
         <>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${percent}%` }} />
+          <p className="progress-phase">{phaseLabel()}</p>
+          <div className={`progress-bar${isTranslating ? "" : " indeterminate"}`}>
+            <div
+              className="progress-fill"
+              style={isTranslating ? { width: `${percent}%` } : undefined}
+            />
           </div>
-          <p className="progress-text">
-            {done}/{total} đoạn ({percent}%)
-          </p>
+          {isTranslating && (
+            <p className="progress-text">
+              {done}/{total} đoạn ({percent}%)
+            </p>
+          )}
         </>
       )}
 

@@ -4,12 +4,16 @@ Mọi provider (Gemini, Gemma, Qwen...) đều hiện thực interface này, nê
 không bao giờ import trực tiếp một provider cụ thể — luôn qua registry.get_provider().
 """
 from abc import ABC, abstractmethod
+from typing import Callable
 import json
 import re
 
 from pydantic import BaseModel
 
 from ..models.glossary import GlossaryEntry
+
+#: Callback báo tiến trình khi stream batch: nhận số đoạn đã dịch xong trong batch.
+ProgressCallback = Callable[[int], None]
 
 
 class RateLimits(BaseModel):
@@ -66,8 +70,14 @@ class BaseProvider(ABC):
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
         provider_options: dict | None = None,
+        progress_cb: ProgressCallback | None = None,
     ) -> BatchTranslationResult:
-        """Dịch nhiều đoạn trong một request để giảm RPD."""
+        """Dịch nhiều đoạn trong MỘT request để giảm RPD.
+
+        `progress_cb`: nếu truyền vào, provider stream phản hồi và gọi
+        `progress_cb(so_doan_da_xong)` khi từng đoạn dịch xong — cho tiến trình
+        real-time mà KHÔNG tăng số request.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -129,3 +139,38 @@ def _load_json(text: str):
         return json.loads(text)
     except (TypeError, ValueError):
         return None
+
+
+def count_streamed_json_items(buffer: str) -> int:
+    """Đếm số object đã đóng hoàn chỉnh nằm trực tiếp trong một mảng JSON.
+
+    Dùng cho phản hồi stream dạng {"translations":[{...},{...}]} hoặc [{...},...]:
+    mỗi object là một đoạn dịch. Bỏ qua ký tự trong chuỗi (kể cả '{' '}' escape),
+    nên con số phản ánh đúng số đoạn ĐÃ dịch xong tính đến thời điểm hiện tại.
+    """
+    count = 0
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in buffer:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch == "}":
+            if stack and stack[-1] == "{":
+                stack.pop()
+                if stack and stack[-1] == "[":  # object là phần tử của mảng -> 1 đoạn xong
+                    count += 1
+        elif ch == "]":
+            if stack and stack[-1] == "[":
+                stack.pop()
+    return count

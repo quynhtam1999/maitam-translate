@@ -49,6 +49,7 @@ async def read_settings(current_user: CurrentUser):
     s = get_settings()
     key_status = auth_store.get_api_key_status(current_user["id"])
     user_qwen_base_url = auth_store.get_qwen_base_url(current_user["id"])
+    user_qwen_model = auth_store.get_qwen_model(current_user["id"])
     return SettingsResponse(
         is_admin=bool(current_user["is_admin"]),
         gemini_api_key_set=bool(key_status["gemini"]["set"]),
@@ -56,6 +57,7 @@ async def read_settings(current_user: CurrentUser):
         qwen_api_key_set=bool(key_status["qwen"]["set"]),
         qwen_api_key_masked=str(key_status["qwen"]["masked"]),
         qwen_base_url=user_qwen_base_url or s.qwen_base_url,
+        qwen_model=user_qwen_model or s.qwen_model,
         gemini_rpm_limit=s.gemini_rpm_limit,
         gemini_tpm_limit=s.gemini_tpm_limit,
         gemini_rpd_limit=s.gemini_rpd_limit,
@@ -83,6 +85,8 @@ async def update_settings(req: SettingsUpdateRequest, current_user: CurrentUser)
         key_updates["qwen_key"] = fields.pop("qwen_api_key")
     if "qwen_base_url" in fields:
         key_updates["qwen_base_url"] = fields.pop("qwen_base_url")
+    if "qwen_model" in fields:
+        key_updates["qwen_model"] = fields.pop("qwen_model")
     if key_updates:
         auth_store.update_api_keys(current_user["id"], **key_updates)
 

@@ -30,6 +30,11 @@ def _provider_credentials(user_id: str, provider: str) -> tuple[str | None, dict
             validate_qwen_base_url(resolve_qwen_base_url(provider_options))
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        if not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Chưa lưu API key ModelScope cho Qwen trong tài khoản.",
+            )
         return api_key, provider_options
 
     if not api_key:
