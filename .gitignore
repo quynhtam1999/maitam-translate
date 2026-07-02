@@ -1,0 +1,26 @@
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# Python / backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Env & logs
+.env
+.env.local
+*.log
+
+# Storage (file người dùng, DB cache/job) — giữ thư mục nhưng bỏ nội dung
+backend/storage/uploads/*
+backend/storage/outputs/*
+backend/storage/cache/*
+!backend/storage/**/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
