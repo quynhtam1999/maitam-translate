@@ -152,7 +152,7 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        <span>Engine: Gemini / Gemma - Qwen3 235B</span>
+        <span>Engine: Gemini / Gemma 4 31B - Qwen3 235B</span>
       </footer>
 
       <SettingsModal

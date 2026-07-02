@@ -13,7 +13,7 @@ _PROVIDERS: dict[str, BaseProvider] = {
 _FREE_TIER_NOTE = {
     "qwen": "Miễn phí: 2.000 lượt gọi/ngày (chung mọi model), tối đa 500 lượt/model/ngày; reset 00:00 giờ Bắc Kinh (UTC+8).",
     "gemini": "Miễn phí trọn đời (giới hạn RPD/ngày)",
-    "gemma": "Miễn phí trọn đời (giới hạn RPD/ngày)",
+    "gemma": "Gemma 4 31B - miễn phí trọn đời (giới hạn RPD/ngày)",
 }
 
 

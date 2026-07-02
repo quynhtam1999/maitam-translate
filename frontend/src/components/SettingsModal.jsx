@@ -176,7 +176,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
               </p>
 
               <label className="field">
-                <span>Gemini / Gemma (Google AI Studio)</span>
+                <span>Gemini / Gemma 4 31B (Google AI Studio)</span>
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
@@ -251,7 +251,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} />
                 <input type="number" min="0" disabled={!isAdmin} value={form.gemini_max_tokens_per_request} onChange={setNumField("gemini_max_tokens_per_request")} />
 
-                <span className="quota-grid-label">Gemma</span>
+                <span className="quota-grid-label">Gemma 4 31B</span>
                 <input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpm_limit} onChange={setNumField("gemma_rpm_limit")} />
                 <input type="number" min="0" disabled={!isAdmin} value={form.gemma_tpm_limit} onChange={setNumField("gemma_tpm_limit")} />
                 <input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpd_limit} onChange={setNumField("gemma_rpd_limit")} />

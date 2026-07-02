@@ -2,7 +2,7 @@
 
 Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **tiếng Việt**,
 **giữ nguyên bố cục trang gốc** (ảnh, bảng, chia cột — chỉ thay chữ tại chỗ), và dịch
-**văn bản dán tay**. Engine dịch đa nhà cung cấp: **Gemini/Gemma** (Google AI Studio) và
+**văn bản dán tay**. Engine dịch đa nhà cung cấp: **Gemini/Gemma 4 31B** (Google AI Studio) và
 **Qwen** (ModelScope, OpenAI-compatible).
 
 Đây là bản web của phần mềm desktop cùng tên (Python/Tkinter, đóng gói .exe). Kỹ thuật
@@ -15,7 +15,7 @@ cỡ chữ cho vừa).
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
   có cache theo user để tiếp tục dịch khi hết quota, đổi model hoặc tắt/mở lại app.
 - Dịch văn bản dán tay bằng 1 request cho mỗi lần gửi, giúp RPD không thể thấp hơn nữa ở luồng văn bản.
-- Provider thật: Gemini/Gemma qua Google AI Studio và Qwen3 235B qua ModelScope
+- Provider thật: Gemini, Gemma 4 31B qua Google AI Studio và Qwen3 235B qua ModelScope
   (OpenAI-compatible). Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
 - PDF overlay bằng PyMuPDF: bóc chữ, xóa chữ gốc tại chỗ, chèn bản dịch, hỗ trợ tài liệu 2 cột,
   giữ ảnh/biểu đồ và tách bảng vector theo cell/dòng để hạn chế vỡ bố cục.
@@ -35,11 +35,11 @@ cỡ chữ cho vừa).
   xem thống kê cache/job và xóa cache/job riêng của user.
 
 ✅ **Tối ưu RPD mới**
-- Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma, Qwen; các field này ghi
+- Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma 4 31B, Qwen; các field này ghi
   vào `.env` và user thường chỉ xem được.
 - Dịch PDF gom batch lớn nhất có thể theo ngân sách input `TPM × 0.8` và ngân sách output
   `Max token/request × 0.9`; không còn trần cứng 200 đoạn/request hoặc 200.000 token/request.
-- Provider set giới hạn đầu ra khi gọi API (`generationConfig.maxOutputTokens` cho Gemini/Gemma,
+- Provider set giới hạn đầu ra khi gọi API (`generationConfig.maxOutputTokens` cho Gemini/Gemma 4 31B,
   `max_tokens` cho Qwen), giúp batch lớn ít bị cắt cụt JSON hơn.
 - Dịch văn bản dán tay vẫn giữ 1 request/lần gửi nhưng cũng hưởng lợi từ giới hạn output mới.
 

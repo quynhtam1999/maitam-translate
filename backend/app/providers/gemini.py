@@ -62,7 +62,7 @@ class GeminiProvider(BaseProvider):
     ) -> TranslationResult:
         api_key = api_key or get_settings().gemini_api_key
         if not api_key:
-            raise RuntimeError("Chưa có API key cho Gemini/Gemma — nhập trong ⚙ Cài đặt")
+            raise RuntimeError("Chưa có API key cho Gemini/Gemma 4 31B — nhập trong ⚙ Cài đặt")
 
         system_prompt = build_system_prompt(target_lang, glossary_hints)
         url = f"{_API_BASE}/{self.model}:generateContent"
@@ -117,7 +117,7 @@ class GeminiProvider(BaseProvider):
 
         api_key = api_key or get_settings().gemini_api_key
         if not api_key:
-            raise RuntimeError("Chưa có API key cho Gemini/Gemma — nhập trong ⚙ Cài đặt")
+            raise RuntimeError("Chưa có API key cho Gemini/Gemma 4 31B — nhập trong ⚙ Cài đặt")
 
         system_prompt = build_batch_system_prompt(target_lang, glossary_hints)
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
