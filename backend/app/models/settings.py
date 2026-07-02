@@ -16,11 +16,13 @@ class SettingsResponse(BaseModel):
     qwen_api_key_set: bool = False
     qwen_api_key_masked: str = ""
     qwen_base_url: str = ""
-    default_target_lang: str = "vi"
 
     gemini_rpm_limit: int = 0
     gemini_tpm_limit: int = 0
     gemini_rpd_limit: int = 0
+    gemma_rpm_limit: int = 0
+    gemma_tpm_limit: int = 0
+    gemma_rpd_limit: int = 0
     qwen_rpm_limit: int = 0
     qwen_tpm_limit: int = 0
     qwen_rpd_limit: int = 0
@@ -29,15 +31,21 @@ class SettingsResponse(BaseModel):
 
 
 class SettingsUpdateRequest(BaseModel):
-    """Cập nhật cấu hình. Trường None = giữ nguyên; với key: "" = xóa key."""
-    gemini_api_key: str | None = None
-    qwen_api_key: str | None = None
+    """Cập nhật cấu hình. Trường None = giữ nguyên.
+
+    KHÔNG có gemini_api_key/qwen_api_key ở đây: site public, mỗi người dùng tự
+    nhập key riêng và key chỉ lưu ở trình duyệt của họ (localStorage), gửi kèm
+    mỗi request qua header X-Gemini-Key / X-Qwen-Key — không lưu trên server để
+    tránh một người ghi đè/xem key của người khác.
+    """
     qwen_base_url: str | None = None
-    default_target_lang: str | None = None
 
     gemini_rpm_limit: int | None = None
     gemini_tpm_limit: int | None = None
     gemini_rpd_limit: int | None = None
+    gemma_rpm_limit: int | None = None
+    gemma_tpm_limit: int | None = None
+    gemma_rpd_limit: int | None = None
     qwen_rpm_limit: int | None = None
     qwen_tpm_limit: int | None = None
     qwen_rpd_limit: int | None = None

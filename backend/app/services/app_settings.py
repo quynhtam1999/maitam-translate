@@ -11,14 +11,17 @@ from ..core.config import BACKEND_ROOT, get_settings
 ENV_PATH = BACKEND_ROOT / ".env"
 
 # Ánh xạ tên trường (snake_case) -> tên biến môi trường trong .env.
+# Cố ý KHÔNG có gemini_api_key/qwen_api_key — key chỉ cấu hình qua Render env
+# (server) hoặc do người dùng tự nhập ở trình duyệt (per-request header), không
+# ghi qua endpoint này để tránh một người dùng public site ghi đè key người khác.
 _FIELD_TO_ENV = {
-    "gemini_api_key": "GEMINI_API_KEY",
-    "qwen_api_key": "QWEN_API_KEY",
     "qwen_base_url": "QWEN_BASE_URL",
-    "default_target_lang": "DEFAULT_TARGET_LANG",
     "gemini_rpm_limit": "GEMINI_RPM_LIMIT",
     "gemini_tpm_limit": "GEMINI_TPM_LIMIT",
     "gemini_rpd_limit": "GEMINI_RPD_LIMIT",
+    "gemma_rpm_limit": "GEMMA_RPM_LIMIT",
+    "gemma_tpm_limit": "GEMMA_TPM_LIMIT",
+    "gemma_rpd_limit": "GEMMA_RPD_LIMIT",
     "qwen_rpm_limit": "QWEN_RPM_LIMIT",
     "qwen_tpm_limit": "QWEN_TPM_LIMIT",
     "qwen_rpd_limit": "QWEN_RPD_LIMIT",

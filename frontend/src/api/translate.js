@@ -1,3 +1,5 @@
+import { authHeadersForProvider } from "./keys.js";
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
 async function handle(res) {
@@ -47,7 +49,13 @@ export async function createPdfJob(file, provider, { targetLang = "vi", forceRet
   formData.append("provider", provider);
   formData.append("target_lang", targetLang);
   formData.append("force_retranslate", String(forceRetranslate));
-  return handle(await fetch(`${API_URL}/pdf/jobs`, { method: "POST", body: formData }));
+  return handle(
+    await fetch(`${API_URL}/pdf/jobs`, {
+      method: "POST",
+      headers: authHeadersForProvider(provider),
+      body: formData,
+    })
+  );
 }
 
 export async function getJobStatus(jobId) {
@@ -58,7 +66,7 @@ export async function resumeJob(jobId, provider) {
   return handle(
     await fetch(`${API_URL}/pdf/jobs/${jobId}/resume`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeadersForProvider(provider) },
       body: JSON.stringify({ provider }),
     })
   );
@@ -73,7 +81,7 @@ export async function translateText(text, provider, targetLang = "vi") {
   return handle(
     await fetch(`${API_URL}/text/translate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeadersForProvider(provider) },
       body: JSON.stringify({ text, provider, target_lang: targetLang }),
     })
   );

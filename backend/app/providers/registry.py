@@ -8,7 +8,7 @@ from .qwen import QwenProvider
 _PROVIDERS: dict[str, BaseProvider] = {
     "qwen": QwenProvider(),
     "gemini": GeminiProvider(model="gemini-3.1-flash-lite", display_name="Gemini 3.1 Flash Lite"),
-    "gemma": GeminiProvider(model="gemma-4-31b", display_name="Gemma 4 31B"),
+    "gemma": GeminiProvider(model="gemma-4-31b", display_name="Gemma 4 31B", name="gemma"),
 }
 
 # Provider nào dùng loại key nào (chỉ để hiển thị/kiểm tra cấu hình).
@@ -24,6 +24,18 @@ def get_provider(name: str) -> BaseProvider:
     if provider is None:
         raise KeyError(f"Provider không tồn tại: {name!r}")
     return provider
+
+
+def resolve_api_key(provider_name: str, gemini_key: str | None, qwen_key: str | None) -> str | None:
+    """Chọn key người dùng tự nhập (header X-Gemini-Key / X-Qwen-Key) theo provider.
+
+    gemini và gemma đều dùng chung Google AI Studio key.
+    """
+    if provider_name in ("gemini", "gemma"):
+        return gemini_key
+    if provider_name == "qwen":
+        return qwen_key
+    return None
 
 
 def list_providers() -> list[ProviderInfo]:

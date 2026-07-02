@@ -5,22 +5,26 @@ import {
   clearTranslationCache,
   clearJobs,
 } from "../api/translate.js";
+import { getLocalKey, setLocalKey } from "../api/keys.js";
 
 const EMPTY = {
   qwen_base_url: "",
-  default_target_lang: "vi",
   gemini_rpm_limit: 0,
   gemini_tpm_limit: 0,
   gemini_rpd_limit: 0,
+  gemma_rpm_limit: 0,
+  gemma_tpm_limit: 0,
+  gemma_rpd_limit: 0,
   qwen_rpm_limit: 0,
   qwen_tpm_limit: 0,
   qwen_rpd_limit: 0,
 };
 
 export default function SettingsModal({ open, onClose, onSaved }) {
-  const [info, setInfo] = useState(null); // dữ liệu gốc từ server (chứa masked key)
+  const [info, setInfo] = useState(null); // dữ liệu gốc từ server (không có key)
   const [form, setForm] = useState(EMPTY);
-  const [geminiKey, setGeminiKey] = useState(""); // "" = giữ nguyên
+  // Key CHỈ lưu ở trình duyệt của người dùng (localStorage) — không gửi lên server để lưu.
+  const [geminiKey, setGeminiKey] = useState("");
   const [qwenKey, setQwenKey] = useState("");
   const [showKeys, setShowKeys] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -32,18 +36,20 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     if (!open) return;
     setError(null);
     setToast(null);
-    setGeminiKey("");
-    setQwenKey("");
+    setGeminiKey(getLocalKey("gemini"));
+    setQwenKey(getLocalKey("qwen"));
     setLoading(true);
     getSettings()
       .then((s) => {
         setInfo(s);
         setForm({
           qwen_base_url: s.qwen_base_url || "",
-          default_target_lang: s.default_target_lang || "vi",
           gemini_rpm_limit: s.gemini_rpm_limit,
           gemini_tpm_limit: s.gemini_tpm_limit,
           gemini_rpd_limit: s.gemini_rpd_limit,
+          gemma_rpm_limit: s.gemma_rpm_limit,
+          gemma_tpm_limit: s.gemma_tpm_limit,
+          gemma_rpd_limit: s.gemma_rpd_limit,
           qwen_rpm_limit: s.qwen_rpm_limit,
           qwen_tpm_limit: s.qwen_tpm_limit,
           qwen_rpd_limit: s.qwen_rpd_limit,
@@ -68,14 +74,11 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     setSaving(true);
     setError(null);
     try {
-      const patch = { ...form };
-      // Key: chỉ gửi khi người dùng gõ gì đó (rỗng = giữ nguyên).
-      if (geminiKey.trim() !== "") patch.gemini_api_key = geminiKey.trim();
-      if (qwenKey.trim() !== "") patch.qwen_api_key = qwenKey.trim();
-      const s = await updateSettings(patch);
+      // Key: chỉ lưu ở trình duyệt này (localStorage), không gửi lên server.
+      setLocalKey("gemini", geminiKey.trim());
+      setLocalKey("qwen", qwenKey.trim());
+      const s = await updateSettings(form);
       setInfo(s);
-      setGeminiKey("");
-      setQwenKey("");
       flash("✓ Đã lưu cài đặt");
       onSaved && onSaved();
     } catch (e) {
@@ -85,21 +88,13 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     }
   };
 
-  const handleClearKey = (which) => async () => {
-    if (!window.confirm("Xóa API key này?")) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const patch = which === "gemini" ? { gemini_api_key: "" } : { qwen_api_key: "" };
-      const s = await updateSettings(patch);
-      setInfo(s);
-      flash("✓ Đã xóa key");
-      onSaved && onSaved();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+  const handleClearKey = (which) => () => {
+    if (!window.confirm("Xóa API key này khỏi trình duyệt?")) return;
+    setLocalKey(which, "");
+    if (which === "gemini") setGeminiKey("");
+    else setQwenKey("");
+    flash("✓ Đã xóa key");
+    onSaved && onSaved();
   };
 
   const handleClearCache = async () => {
@@ -148,27 +143,28 @@ export default function SettingsModal({ open, onClose, onSaved }) {
           <p className="muted">Đang tải cài đặt…</p>
         ) : (
           <div className="modal-body">
-            {/* --- API keys --- */}
+            {/* --- API keys (chỉ lưu trên trình duyệt này, KHÔNG gửi lên server) --- */}
             <section className="settings-section">
               <h3>API Key</h3>
+              <p className="note">
+                Key chỉ lưu trên trình duyệt của bạn (localStorage), không gửi lên server để lưu —
+                mỗi người dùng tự chịu quota key của mình.
+                {info?.gemini_api_key_set || info?.qwen_api_key_set ? (
+                  <> Trang này cũng có key mặc định do quản trị viên cấu hình, dùng khi bạn để trống.</>
+                ) : null}
+              </p>
+
               <label className="field">
-                <span>
-                  Gemini / Gemma (Google AI Studio)
-                  {info?.gemini_api_key_set && (
-                    <em className="tag ok"> đã lưu: {info.gemini_api_key_masked}</em>
-                  )}
-                </span>
+                <span>Gemini / Gemma (Google AI Studio)</span>
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
-                    placeholder={
-                      info?.gemini_api_key_set ? "Để trống nếu giữ nguyên" : "Dán API key vào đây"
-                    }
+                    placeholder="Dán API key của bạn vào đây"
                     value={geminiKey}
                     onChange={(e) => setGeminiKey(e.target.value)}
                     autoComplete="off"
                   />
-                  {info?.gemini_api_key_set && (
+                  {geminiKey && (
                     <button type="button" className="btn-ghost sm" onClick={handleClearKey("gemini")}>
                       Xóa
                     </button>
@@ -177,23 +173,16 @@ export default function SettingsModal({ open, onClose, onSaved }) {
               </label>
 
               <label className="field">
-                <span>
-                  Qwen (ModelScope)
-                  {info?.qwen_api_key_set && (
-                    <em className="tag ok"> đã lưu: {info.qwen_api_key_masked}</em>
-                  )}
-                </span>
+                <span>Qwen (ModelScope)</span>
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
-                    placeholder={
-                      info?.qwen_api_key_set ? "Để trống nếu giữ nguyên" : "Dán API key vào đây"
-                    }
+                    placeholder="Dán API key của bạn vào đây"
                     value={qwenKey}
                     onChange={(e) => setQwenKey(e.target.value)}
                     autoComplete="off"
                   />
-                  {info?.qwen_api_key_set && (
+                  {qwenKey && (
                     <button type="button" className="btn-ghost sm" onClick={handleClearKey("qwen")}>
                       Xóa
                     </button>
@@ -225,15 +214,6 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 />
               </label>
 
-              <label className="field">
-                <span>Ngôn ngữ đích mặc định</span>
-                <input
-                  type="text"
-                  value={form.default_target_lang}
-                  onChange={setField("default_target_lang")}
-                  placeholder="vi"
-                />
-              </label>
             </section>
 
             {/* --- Giới hạn quota --- */}
@@ -245,17 +225,24 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <span className="quota-grid-head">TPM</span>
                 <span className="quota-grid-head">RPD</span>
 
-                <span className="quota-grid-label">Gemini / Gemma</span>
+                <span className="quota-grid-label">Gemini 3.1 Flash Lite</span>
                 <input type="number" min="0" value={form.gemini_rpm_limit} onChange={setNumField("gemini_rpm_limit")} />
                 <input type="number" min="0" value={form.gemini_tpm_limit} onChange={setNumField("gemini_tpm_limit")} />
                 <input type="number" min="0" value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} />
+
+                <span className="quota-grid-label">Gemma</span>
+                <input type="number" min="0" value={form.gemma_rpm_limit} onChange={setNumField("gemma_rpm_limit")} />
+                <input type="number" min="0" value={form.gemma_tpm_limit} onChange={setNumField("gemma_tpm_limit")} />
+                <input type="number" min="0" value={form.gemma_rpd_limit} onChange={setNumField("gemma_rpd_limit")} />
 
                 <span className="quota-grid-label">Qwen</span>
                 <input type="number" min="0" value={form.qwen_rpm_limit} onChange={setNumField("qwen_rpm_limit")} />
                 <input type="number" min="0" value={form.qwen_tpm_limit} onChange={setNumField("qwen_tpm_limit")} />
                 <input type="number" min="0" value={form.qwen_rpd_limit} onChange={setNumField("qwen_rpd_limit")} />
               </div>
-              <p className="muted sm">RPM: yêu cầu/phút · TPM: token/phút · RPD: yêu cầu/ngày</p>
+              <p className="muted sm">
+                RPM/TPM: đạt giới hạn trong 1 phút thì tự chờ sang phút kế tiếp; RPD: đạt giới hạn ngày thì ngưng dịch và báo cho người dùng.
+              </p>
             </section>
 
             {/* --- Bộ nhớ đệm / dọn dẹp --- */}

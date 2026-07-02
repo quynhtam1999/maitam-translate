@@ -23,12 +23,14 @@ class Settings(BaseSettings):
     # App
     backend_cors_origins: str = "http://localhost:5173"
     storage_dir: str = "./storage"
-    default_target_lang: str = "vi"
 
     # Giới hạn quota (RPM / TPM / RPD) từng provider
     gemini_rpm_limit: int = 15
-    gemini_tpm_limit: int = 1_000_000
+    gemini_tpm_limit: int = 250_000
     gemini_rpd_limit: int = 1500
+    gemma_rpm_limit: int = 15
+    gemma_tpm_limit: int = 250_000
+    gemma_rpd_limit: int = 1500
     qwen_rpm_limit: int = 60
     qwen_tpm_limit: int = 100_000
     # ModelScope free: 2000 lượt/ngày CHUNG mọi model, nhưng tối đa 500 lượt/model/ngày

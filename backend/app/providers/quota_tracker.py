@@ -75,11 +75,59 @@ class QuotaTracker:
             resets_at=self._next_reset_iso(provider),
         )
 
+    def wait_seconds_until_ready(
+        self,
+        provider: str,
+        rpm_limit: int,
+        tpm_limit: int,
+        rpd_limit: int,
+        estimated_tokens: int = 0,
+    ) -> float | None:
+        """Return seconds to wait for minute limits, 0 if ready, None if RPD is exhausted."""
+        now = time.time()
+        with self._lock:
+            self._prune(provider, now)
+            if rpd_limit > 0 and self._daily_requests_locked(provider) >= rpd_limit:
+                return None
+
+            events = self._events[provider]
+            waits: list[float] = []
+
+            if rpm_limit > 0 and len(events) >= rpm_limit:
+                waits.append(self._seconds_until_event_expires(events[0], now))
+
+            token_need = max(0, int(estimated_tokens or 0))
+            if tpm_limit > 0 and events:
+                tpm_used = sum(e.tokens for e in events)
+                if token_need >= tpm_limit:
+                    needed_to_free = tpm_used
+                else:
+                    needed_to_free = tpm_used + token_need - tpm_limit
+
+                if needed_to_free > 0:
+                    freed = 0
+                    for event in events:
+                        freed += event.tokens
+                        if freed >= needed_to_free:
+                            waits.append(self._seconds_until_event_expires(event, now))
+                            break
+
+            return max(waits, default=0.0)
+
     # --- helpers ---
     def _prune(self, provider: str, now: float) -> None:
         q = self._events[provider]
         while q and now - q[0].ts > 60:
             q.popleft()
+
+    def _daily_requests_locked(self, provider: str) -> int:
+        d = self._daily[provider]
+        day = self._current_reset_day(provider)
+        return d["requests"] if d["day"] == day else 0
+
+    @staticmethod
+    def _seconds_until_event_expires(event: _Event, now: float) -> float:
+        return max(0.0, 60.0 - (now - event.ts) + 0.25)
 
     def _current_reset_day(self, provider: str) -> str:
         offset = PROVIDER_UTC_OFFSET_HOURS.get(provider, 0)

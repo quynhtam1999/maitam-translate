@@ -29,6 +29,7 @@ async def translate_pdf(
     provider_name: str,
     target_lang: str = "vi",
     force_retranslate: bool = False,
+    api_key: str | None = None,
 ) -> None:
     settings = get_settings()
     cache = SegmentCache(settings.cache_dir / "segments.db")
@@ -54,7 +55,7 @@ async def translate_pdf(
             job_store.update_job(job_id, progress=progress)
 
         translations = await translator.translate_segments(
-            segments, target_lang=target_lang, on_progress=on_progress
+            segments, target_lang=target_lang, on_progress=on_progress, api_key=api_key
         )
 
         overlay_translate(doc, segments, translations)  # TODO: đã stub

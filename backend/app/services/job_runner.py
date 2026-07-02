@@ -15,6 +15,7 @@ async def run_pdf_job(
     provider_name: str,
     target_lang: str = "vi",
     force_retranslate: bool = False,
+    api_key: str | None = None,
 ) -> None:
     await translate_pdf(
         job_id=job_id,
@@ -23,4 +24,5 @@ async def run_pdf_job(
         provider_name=provider_name,
         target_lang=target_lang,
         force_retranslate=force_retranslate,
+        api_key=api_key,
     )

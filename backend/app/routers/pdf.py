@@ -1,7 +1,7 @@
 """Endpoint dịch PDF theo mẫu job: tạo -> poll -> (resume) -> tải kết quả."""
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from ..core import job_store
@@ -14,7 +14,7 @@ from ..models.job import (
     JobStatusResponse,
 )
 from ..providers.quota_tracker import quota_tracker
-from ..providers.registry import get_provider
+from ..providers.registry import get_provider, resolve_api_key
 from ..services.job_runner import run_pdf_job
 
 router = APIRouter(prefix="/api/pdf", tags=["pdf"])
@@ -49,6 +49,8 @@ async def create_pdf_job(
     provider: str = Form(...),
     target_lang: str = Form("vi"),
     force_retranslate: bool = Form(False),
+    x_gemini_key: str | None = Header(default=None),
+    x_qwen_key: str | None = Header(default=None),
 ):
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file PDF")
@@ -57,6 +59,7 @@ async def create_pdf_job(
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Provider không hợp lệ: {provider}")
 
+    api_key = resolve_api_key(provider, x_gemini_key, x_qwen_key)
     settings = get_settings()
     # tên file tạm sẽ đặt theo job_id sau khi tạo bản ghi
     job_id = job_store.create_job(
@@ -75,7 +78,8 @@ async def create_pdf_job(
     job_store._db().commit()  # noqa: SLF001
 
     background_tasks.add_task(
-        run_pdf_job, job_id, str(input_path), str(output_path), provider, target_lang, force_retranslate
+        run_pdf_job, job_id, str(input_path), str(output_path), provider, target_lang,
+        force_retranslate, api_key,
     )
     return JobCreateResponse(job_id=job_id, status=JobStatus.QUEUED)
 
@@ -89,7 +93,13 @@ async def get_pdf_job(job_id: str):
 
 
 @router.post("/jobs/{job_id}/resume", response_model=JobCreateResponse, status_code=202)
-async def resume_pdf_job(job_id: str, body: JobResumeRequest, background_tasks: BackgroundTasks):
+async def resume_pdf_job(
+    job_id: str,
+    body: JobResumeRequest,
+    background_tasks: BackgroundTasks,
+    x_gemini_key: str | None = Header(default=None),
+    x_qwen_key: str | None = Header(default=None),
+):
     job = job_store.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy job")
@@ -100,10 +110,11 @@ async def resume_pdf_job(job_id: str, body: JobResumeRequest, background_tasks: 
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Provider không hợp lệ: {provider}")
 
+    api_key = resolve_api_key(provider, x_gemini_key, x_qwen_key)
     job_store.update_job(job_id, status=JobStatus.QUEUED, provider=provider, error=None)
     background_tasks.add_task(
         run_pdf_job, job_id, job["input_path"], job["output_path"],
-        provider, job.get("target_lang", "vi"), False,
+        provider, job.get("target_lang", "vi"), False, api_key,
     )
     return JobCreateResponse(job_id=job_id, status=JobStatus.QUEUED)
 

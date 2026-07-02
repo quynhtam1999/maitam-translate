@@ -8,6 +8,13 @@
       "cwd": "frontend",
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "cwd": "backend",
+      "port": 8000
     }
   ]
 }

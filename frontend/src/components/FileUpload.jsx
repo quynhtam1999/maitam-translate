@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 import { listProviders } from "../api/translate.js";
+import { hasLocalKey, localKeyKindForProvider } from "../api/keys.js";
+
+function isUsable(p) {
+  const kind = localKeyKindForProvider(p.name);
+  return p.key_configured || (kind && hasLocalKey(kind));
+}
 
 export default function FileUpload({ onSubmit, loading, refreshKey }) {
   const [file, setFile] = useState(null);
@@ -32,8 +38,8 @@ export default function FileUpload({ onSubmit, loading, refreshKey }) {
         Mô hình dịch:
         <select value={provider} onChange={(e) => setProvider(e.target.value)}>
           {providers.map((p) => (
-            <option key={p.name} value={p.name} disabled={!p.key_configured}>
-              {p.display_name} {p.key_configured ? "" : "(chưa có key)"}
+            <option key={p.name} value={p.name} disabled={!isUsable(p)}>
+              {p.display_name} {isUsable(p) ? "" : "(chưa có key)"}
             </option>
           ))}
         </select>

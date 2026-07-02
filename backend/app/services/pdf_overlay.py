@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 try:
     import fitz  # PyMuPDF
@@ -19,6 +20,8 @@ _FONT_ALIAS = "dejavu-vi"
 
 # Bit cờ "in đậm" trong span["flags"] của PyMuPDF (xem docs TextPage flags).
 _FLAG_BOLD = 1 << 4
+_IMAGE_SKIP_OVERLAP_RATIO = 0.5
+_TABLE_ROW_TOLERANCE = 2.0
 
 
 @dataclass
@@ -34,58 +37,186 @@ class TextSegment:
 
 
 def collect_segments(doc) -> list[TextSegment]:
-    """Duyệt từng trang qua page.get_text('dict'), lấy khối chữ kèm bbox/size/màu/đậm."""
+    """Duyệt từng trang, lấy chữ thật theo bbox; không OCR/dịch nội dung nằm trong ảnh."""
     segments: list[TextSegment] = []
     for page_index in range(doc.page_count):
         page = doc[page_index]
         page_dict = page.get_text("dict")
-        for block_index, block in enumerate(page_dict.get("blocks", [])):
+        blocks = page_dict.get("blocks", [])
+        image_rects = [
+            fitz.Rect(block.get("bbox", (0, 0, 0, 0)))
+            for block in blocks
+            if block.get("type") == 1
+        ]
+        page_segments: list[TextSegment] = []
+
+        for block_index, block in enumerate(blocks):
             if block.get("type") != 0:  # 0 = text block, 1 = image block
                 continue
 
             lines = block.get("lines", [])
-            texts: list[str] = []
-            sizes: list[float] = []
-            colors: list[int] = []
-            bold_votes = 0
-            span_count = 0
-
-            for line in lines:
-                line_text_parts = []
-                for span in line.get("spans", []):
-                    span_text = span.get("text", "")
-                    if not span_text:
-                        continue
-                    line_text_parts.append(span_text)
-                    sizes.append(span.get("size", 0.0))
-                    colors.append(span.get("color", 0))
-                    span_count += 1
-                    if span.get("flags", 0) & _FLAG_BOLD or "bold" in span.get("font", "").lower():
-                        bold_votes += 1
-                if line_text_parts:
-                    texts.append("".join(line_text_parts))
-
-            text = "\n".join(texts).strip()
-            if not text:
+            block_rect = fitz.Rect(block.get("bbox", (0, 0, 0, 0)))
+            if _overlaps_image(block_rect, image_rects):
                 continue
 
-            font_size = max(sizes) if sizes else 10.0
-            color = colors[0] if colors else 0
-            is_bold = span_count > 0 and bold_votes * 2 >= span_count
+            if _looks_like_table_block(lines):
+                for line_index, line in enumerate(lines):
+                    text = _clean_inline_text(_line_text(line))
+                    if not _should_translate_text(text):
+                        continue
+                    line_rect = fitz.Rect(line.get("bbox", (0, 0, 0, 0)))
+                    if _overlaps_image(line_rect, image_rects):
+                        continue
+                    page_segments.append(
+                        _segment_from_lines(
+                            page_index,
+                            line_rect,
+                            [line],
+                            text,
+                            f"p{page_index}_b{block_index}_l{line_index}",
+                        )
+                    )
+                continue
 
-            segments.append(
-                TextSegment(
-                    page_index=page_index,
-                    bbox=tuple(block.get("bbox", (0, 0, 0, 0))),
-                    text=text,
-                    font_size=font_size,
-                    color=color,
-                    is_bold=is_bold,
-                    block_id=f"p{page_index}_b{block_index}",
+            texts: list[str] = []
+            for line in lines:
+                line_text = _line_text(line)
+                if line_text:
+                    texts.append(line_text)
+
+            text = _clean_block_text("\n".join(texts))
+            if not _should_translate_text(text):
+                continue
+
+            page_segments.append(
+                _segment_from_lines(
+                    page_index,
+                    block_rect,
+                    lines,
+                    text,
+                    f"p{page_index}_b{block_index}",
                 )
             )
 
+        page_segments.sort(
+            key=lambda seg: _reading_order_key(seg, page.rect.width, page.rect.height)
+        )
+        segments.extend(page_segments)
+
     return segments
+
+
+def _segment_from_lines(
+    page_index: int,
+    rect: "fitz.Rect",
+    lines: list[dict],
+    text: str,
+    block_id: str,
+) -> TextSegment:
+    sizes: list[float] = []
+    color_weights: dict[int, int] = {}
+    bold_votes = 0
+    span_count = 0
+
+    for line in lines:
+        for span in line.get("spans", []):
+            span_text = span.get("text", "")
+            if not span_text:
+                continue
+            sizes.append(span.get("size", 0.0))
+            color = span.get("color", 0)
+            color_weights[color] = color_weights.get(color, 0) + len(span_text)
+            span_count += 1
+            if span.get("flags", 0) & _FLAG_BOLD or "bold" in span.get("font", "").lower():
+                bold_votes += 1
+
+    return TextSegment(
+        page_index=page_index,
+        bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
+        text=text,
+        font_size=max(sizes) if sizes else 10.0,
+        color=max(color_weights, key=color_weights.get) if color_weights else 0,
+        is_bold=span_count > 0 and bold_votes * 2 >= span_count,
+        block_id=block_id,
+    )
+
+
+def _line_text(line: dict) -> str:
+    return "".join(span.get("text", "") for span in line.get("spans", []))
+
+
+def _clean_inline_text(text: str) -> str:
+    text = text.replace("\u00ad", "")
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _clean_block_text(text: str) -> str:
+    text = text.replace("\u00ad", "")
+    text = re.sub(r"(?<=\w)-\s*\n\s*(?=\w)", "", text)
+    text = re.sub(r"\s*\n\s*", " ", text)
+    return _clean_inline_text(text)
+
+
+def _should_translate_text(text: str) -> bool:
+    if not text:
+        return False
+    if re.fullmatch(r"\d+\s*/\s*DOI:.*", text, flags=re.IGNORECASE):
+        return False
+    return bool(re.search(r"[^\W\d_]", text))
+
+
+def _looks_like_table_block(lines: list[dict]) -> bool:
+    if len(lines) < 4:
+        return False
+
+    rows: list[list["fitz.Rect"]] = []
+    for line in lines:
+        rect = fitz.Rect(line.get("bbox", (0, 0, 0, 0)))
+        if rect.is_empty:
+            continue
+        for row in rows:
+            if abs(row[0].y0 - rect.y0) <= _TABLE_ROW_TOLERANCE:
+                row.append(rect)
+                break
+        else:
+            rows.append([rect])
+
+    multi_cell_rows = sum(
+        1
+        for row in rows
+        if len(row) >= 2 and (max(rect.x0 for rect in row) - min(rect.x0 for rect in row)) > 24
+    )
+    distinct_x = len({round(rect.x0 / 12) for row in rows for rect in row})
+    return multi_cell_rows >= 2 or (multi_cell_rows >= 1 and distinct_x >= 3)
+
+
+def _overlaps_image(rect: "fitz.Rect", image_rects: list["fitz.Rect"]) -> bool:
+    if rect.is_empty:
+        return False
+    rect_area = rect.get_area()
+    if rect_area <= 0:
+        return False
+    for image_rect in image_rects:
+        overlap = rect & image_rect
+        if not overlap.is_empty and overlap.get_area() / rect_area >= _IMAGE_SKIP_OVERLAP_RATIO:
+            return True
+    return False
+
+
+def _reading_order_key(seg: TextSegment, page_width: float, page_height: float):
+    x0, y0, x1, _ = seg.bbox
+    width = x1 - x0
+    center_x = (x0 + x1) / 2
+    is_full_width = width >= page_width * 0.72
+    if y0 < page_height * 0.22:
+        column = -1
+    elif y0 > page_height * 0.92:
+        column = 3
+    elif is_full_width:
+        column = 2
+    else:
+        column = 0 if center_x < page_width / 2 else 1
+    return (column, y0, x0)
 
 
 class Fitter:

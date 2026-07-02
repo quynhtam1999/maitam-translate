@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { listProviders, translateText } from "../api/translate.js";
+import { hasLocalKey, localKeyKindForProvider } from "../api/keys.js";
 import QuotaBadge from "./QuotaBadge.jsx";
+
+function isUsable(p) {
+  const kind = localKeyKindForProvider(p.name);
+  return p.key_configured || (kind && hasLocalKey(kind));
+}
 
 export default function TextTranslate({ refreshKey }) {
   const [providers, setProviders] = useState([]);
@@ -40,8 +46,8 @@ export default function TextTranslate({ refreshKey }) {
       <div className="text-toolbar">
         <select value={provider} onChange={(e) => setProvider(e.target.value)}>
           {providers.map((p) => (
-            <option key={p.name} value={p.name} disabled={!p.key_configured}>
-              {p.display_name}
+            <option key={p.name} value={p.name} disabled={!isUsable(p)}>
+              {p.display_name} {isUsable(p) ? "" : "(chưa có key)"}
             </option>
           ))}
         </select>

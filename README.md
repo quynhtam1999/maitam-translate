@@ -16,30 +16,38 @@ cỡ chữ cho vừa).
 - `/api/providers` trả đúng danh sách **Qwen3 235B / Gemini / Gemma** cùng trạng thái key
   và ghi chú hạn mức miễn phí.
 - Tạo job dịch PDF qua `/api/pdf/jobs` thành công, job chuyển trạng thái đúng luồng
-  (`queued` → `running` → `failed` với thông báo lỗi rõ ràng tại đúng điểm `TODO`).
+  (`queued` → `running` → `done` / `paused_quota` / `failed`).
 - **Giao diện dark premium** (nền đen + gradient tím theo tông logo), có **bảng ⚙ Cài đặt**
-  đầy đủ: nhập/xóa API key, Qwen Base URL, ngôn ngữ đích, chỉnh giới hạn quota, xem thống kê
+  đầy đủ: nhập/xóa API key, Qwen Base URL, chỉnh giới hạn quota riêng cho Qwen / Gemini / Gemma, xem thống kê
   cache và nút **xóa cache bản dịch / xóa lịch sử job & file**. Đã xác minh trên trình duyệt:
   mở modal → lưu cài đặt → ghi vào `.env` → danh sách mô hình tự cập nhật trạng thái key.
 
 🔑 **API key đã được cấu hình** (Gemini + Qwen/ModelScope) trong `backend/.env`.
 
-⚠️ **Chưa dịch được thật** — hai chỗ cốt lõi vẫn là **stub có chủ đích** (raise lỗi rõ
-ràng thay vì âm thầm sai), chờ điền logic:
-- `backend/app/providers/gemini.py` & `qwen.py` — đã có API key nhưng **chưa có code gọi HTTP
-  thật** tới Gemini / ModelScope (hàm `translate()` còn raise `NotImplementedError`).
-- `backend/app/services/pdf_overlay.py` — chưa port thuật toán bóc & overlay PDF từ bản
-  desktop (`collect_segments`, `Fitter`, `overlay_translate`).
-
-Khi thử tạo 1 job dịch PDF, job sẽ báo `status: failed` với lỗi
-`"collect_segments chưa được triển khai"` — đây là hành vi **đúng như thiết kế**, không
-phải bug.
+✅ **Đã có logic dịch thật**:
+- `backend/app/providers/gemini.py` & `qwen.py` gọi HTTP thật tới Gemini / ModelScope và lấy
+  token usage từ phản hồi để đếm quota cục bộ.
+- `backend/app/services/pdf_overlay.py` bóc chữ bằng PyMuPDF, giữ bố cục PDF gốc bằng overlay,
+  hỗ trợ tài liệu 2 cột, giữ nguyên ảnh/biểu đồ dạng image block, và tách bảng dạng vector
+  theo cell/dòng để không làm vỡ cấu trúc bảng.
+- Ảnh/biểu đồ không được OCR và không dịch nội dung nằm trong ảnh; caption và chữ thật ngoài
+  vùng ảnh vẫn được xử lý như văn bản PDF.
 
 ### Model Qwen đang dùng
 `Qwen/Qwen3-235B-A22B-Instruct-2507` qua ModelScope (endpoint OpenAI-compatible).
 Hạn mức miễn phí: **2.000 lượt gọi/ngày** (chung mọi model), tối đa **500 lượt/model/ngày**;
 reset lúc 00:00 giờ Bắc Kinh (UTC+8), vượt hạn mức trả HTTP 429. Vì chỉ dùng 1 model để dịch
 nên ngưỡng thực tế là 500/ngày (đã đặt `QWEN_RPD_LIMIT=500`).
+
+### Cách xử lý quota
+
+- **RPM** (requests per minute) và **TPM** (tokens per minute): khi bộ đếm cục bộ đạt giới hạn
+  trong cửa sổ 60 giây, backend tự chờ tới khi sang cửa sổ phút kế tiếp rồi tiếp tục dịch.
+- **RPD** (requests per day): khi đạt giới hạn ngày của model/key hiện tại, job ngưng ở trạng
+  thái `paused_quota` và báo rõ đã hết giới hạn ngày; người dùng có thể chờ reset ngày hoặc
+  đổi model/API key để dịch tiếp nhờ cache đoạn đã dịch.
+- Khi dịch PDF, backend gom nhiều đoạn chưa có cache vào một request batch lớn theo TPM của
+  model (mặc định Gemini/Gemma 250.000 TPM), nhằm giảm số request và tiết kiệm RPD.
 
 ## Kiến trúc
 
@@ -115,7 +123,7 @@ frontend/
 ```
 
 Router `settings` (backend) + `SettingsModal` (frontend) là phần mới: đọc/ghi API key, Qwen
-Base URL, ngôn ngữ đích, giới hạn quota vào `.env`, và dọn cache/job. Ở gốc còn `start.bat`
+Base URL, giới hạn quota vào `.env`, và dọn cache/job. Ở gốc còn `start.bat`
 để khởi động nhanh cả hai server.
 
 ## API chính
@@ -135,8 +143,6 @@ Base URL, ngôn ngữ đích, giới hạn quota vào `.env`, và dọn cache/jo
 
 ## Việc cần làm tiếp (TODO)
 
-1. Hiện thực `providers/gemini.py` & `qwen.py` — gọi HTTP thật (API key đã có), trả token thật để đếm quota.
-   Qwen: `POST {QWEN_BASE_URL}/chat/completions`, model `Qwen/Qwen3-235B-A22B-Instruct-2507`.
-2. Port thuật toán PyMuPDF trong `services/pdf_overlay.py` (`collect_segments`, `Fitter`, `overlay_translate`) từ bản desktop.
-3. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
-4. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song.
+1. Kiểm thử thêm trên nhiều PDF y khoa 2 cột phức tạp, đặc biệt tài liệu scan/OCR kém hoặc bảng nhiều tầng.
+2. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
+3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song.

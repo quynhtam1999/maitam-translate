@@ -5,7 +5,7 @@ import QuotaBadge from "./QuotaBadge.jsx";
 const STATUS_LABEL = {
   queued: "Đang chờ...",
   running: "Đang dịch...",
-  paused_quota: "Đã hết quota — cần đổi mô hình để dịch tiếp",
+  paused_quota: "Tạm dừng do quota",
   done: "Hoàn tất",
   failed: "Thất bại",
 };
@@ -29,6 +29,7 @@ export default function JobProgress({ status, onResumed }) {
   const total = progress.segments_total || 0;
   const done = progress.segments_translated || 0;
   const percent = total ? Math.round((done / total) * 100) : 0;
+  const isDailyLimit = /RPD|giới hạn ngày/i.test(status.error || "");
 
   const handleResume = async () => {
     await resumeJob(status.job_id, newProvider);
@@ -37,7 +38,9 @@ export default function JobProgress({ status, onResumed }) {
 
   return (
     <div className="job-progress">
-      <p className="status-line">{STATUS_LABEL[status.status] || status.status}</p>
+      <p className="status-line">
+        {isDailyLimit ? "Đã hết giới hạn ngày của model này" : STATUS_LABEL[status.status] || status.status}
+      </p>
 
       {(status.status === "running" || status.status === "queued") && total > 0 && (
         <>
