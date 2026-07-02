@@ -1,7 +1,10 @@
-"""Provider Qwen qua ModelScope (endpoint OpenAI-compatible). Hiện là STUB."""
+"""Provider Qwen qua ModelScope (endpoint OpenAI-compatible)."""
+import httpx
+
 from ..core.config import get_settings
 from ..models.glossary import GlossaryEntry
 from .base import BaseProvider, ProviderQuotaError, RateLimits, TranslationResult
+from .prompt import build_system_prompt
 
 
 class QwenProvider(BaseProvider):
@@ -24,11 +27,48 @@ class QwenProvider(BaseProvider):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
     ) -> TranslationResult:
-        # TODO: gọi endpoint OpenAI-compatible của ModelScope qua httpx:
-        #   POST {QWEN_BASE_URL}/chat/completions với header Authorization: Bearer <QWEN_API_KEY>.
-        #   - messages: system (yêu cầu dịch sang target_lang + glossary) + user (text).
-        #   - Đọc response.usage.prompt_tokens / completion_tokens làm token thật.
-        #   - Nếu HTTP 429 / báo hết quota -> raise ProviderQuotaError.
-        raise NotImplementedError(
-            "QwenProvider.translate chưa được triển khai — xem TODO trong qwen.py"
+        settings = get_settings()
+        if not settings.qwen_api_key:
+            raise RuntimeError("Chưa cấu hình QWEN_API_KEY")
+
+        system_prompt = build_system_prompt(target_lang, glossary_hints)
+        url = f"{settings.qwen_base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {settings.qwen_api_key}"}
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0.2,
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, headers=headers, json=body)
+
+        if resp.status_code == 429:
+            raise ProviderQuotaError(f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}")
+        if resp.status_code >= 400:
+            data = _safe_json(resp)
+            message = (data.get("error") or {}).get("message", resp.text) if data else resp.text
+            raise RuntimeError(f"Qwen API lỗi ({resp.status_code}): {message}")
+
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("Qwen không trả về kết quả")
+
+        translated = (choices[0].get("message") or {}).get("content", "").strip()
+        usage = data.get("usage", {})
+        return TranslationResult(
+            text=translated,
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
         )
+
+
+def _safe_json(resp: httpx.Response) -> dict | None:
+    try:
+        return resp.json()
+    except ValueError:
+        return None
