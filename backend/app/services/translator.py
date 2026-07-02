@@ -5,6 +5,7 @@ hết quota/tắt máy giữa chừng thì phần đã dịch vẫn còn trong c
 """
 import asyncio
 import math
+from dataclasses import dataclass
 
 from ..models.glossary import GlossaryEntry
 from .cache import SegmentCache
@@ -13,8 +14,26 @@ from .pdf_overlay import TextSegment
 from ..providers.base import BaseProvider, ProviderQuotaError
 from ..providers.quota_tracker import quota_tracker
 
-_MAX_BATCH_ITEMS = 200
-_MAX_BATCH_TOKENS = 200_000
+_MAX_BATCH_ITEMS = 2000
+_INPUT_BATCH_HEADROOM = 0.8
+_OUTPUT_BATCH_HEADROOM = 0.9
+_SINGLE_PROMPT_TOKEN_OVERHEAD = 256
+_BATCH_PROMPT_TOKEN_OVERHEAD = 512
+_JSON_ITEM_TOKEN_OVERHEAD = 16
+_OUTPUT_ITEM_TOKEN_OVERHEAD = 16
+_OUTPUT_EXPANSION_FACTOR = 1.3
+
+
+@dataclass(frozen=True)
+class _PendingTranslation:
+    original: str
+    prepared: str
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 class Translator:
@@ -80,7 +99,7 @@ class Translator:
                 unique_texts.setdefault(seg.text, None)
 
         text_to_translation: dict[str, str] = {}
-        pending: list[tuple[str, str, int]] = []
+        pending: list[_PendingTranslation] = []
         total = len(unique_texts)
         done = 0
         for text in unique_texts:
@@ -93,12 +112,19 @@ class Translator:
                 continue
 
             prepared = apply_glossary_pre(text, self.glossary)
-            pending.append((text, prepared, _estimate_total_tokens(prepared)))
+            pending.append(
+                _PendingTranslation(
+                    original=text,
+                    prepared=prepared,
+                    input_tokens=_estimate_batch_input_tokens(prepared),
+                    output_tokens=_estimate_output_tokens(prepared),
+                )
+            )
 
         for batch in self._make_batches(pending):
-            originals = [item[0] for item in batch]
-            prepared_texts = [item[1] for item in batch]
-            estimated_tokens = sum(item[2] for item in batch)
+            originals = [item.original for item in batch]
+            prepared_texts = [item.prepared for item in batch]
+            estimated_tokens = _estimate_batch_total_tokens(batch)
 
             await self._wait_for_quota_window(estimated_tokens)
             result = await self.provider.translate_batch(
@@ -127,29 +153,33 @@ class Translator:
 
         return {seg.block_id: text_to_translation.get(seg.text, seg.text) for seg in segments}
 
-    def _make_batches(self, pending: list[tuple[str, str, int]]) -> list[list[tuple[str, str, int]]]:
+    def _make_batches(self, pending: list[_PendingTranslation]) -> list[list[_PendingTranslation]]:
         limits = self.provider.get_limits()
-        budget = _batch_token_budget(limits.tpm)
-        batches: list[list[tuple[str, str, int]]] = []
-        current: list[tuple[str, str, int]] = []
-        current_tokens = 0
+        input_budget = _batch_input_token_budget(limits.tpm)
+        output_budget = _batch_output_token_budget(limits.max_output_tokens)
+        batches: list[list[_PendingTranslation]] = []
+        current: list[_PendingTranslation] = []
+        current_input_tokens = _BATCH_PROMPT_TOKEN_OVERHEAD
+        current_output_tokens = 0
 
         for item in pending:
-            item_tokens = item[2]
             should_flush = (
                 current
                 and (
                     len(current) >= _MAX_BATCH_ITEMS
-                    or current_tokens + item_tokens > budget
+                    or _exceeds_budget(current_input_tokens, item.input_tokens, input_budget)
+                    or _exceeds_budget(current_output_tokens, item.output_tokens, output_budget)
                 )
             )
             if should_flush:
                 batches.append(current)
                 current = []
-                current_tokens = 0
+                current_input_tokens = _BATCH_PROMPT_TOKEN_OVERHEAD
+                current_output_tokens = 0
 
             current.append(item)
-            current_tokens += item_tokens
+            current_input_tokens += item.input_tokens
+            current_output_tokens += item.output_tokens
 
         if current:
             batches.append(current)
@@ -187,11 +217,40 @@ class Translator:
 
 def _estimate_total_tokens(text: str) -> int:
     """Rough local estimate for TPM gating before the provider returns real usage."""
-    source_tokens = max(len(text) / 4, len(text.split()) * 1.3, 1)
-    return math.ceil(source_tokens * 2.5 + 256)
+    return _estimate_input_tokens(text) + _estimate_output_tokens(text)
 
 
-def _batch_token_budget(tpm_limit: int) -> int:
+def _estimate_batch_total_tokens(batch: list[_PendingTranslation]) -> int:
+    return _BATCH_PROMPT_TOKEN_OVERHEAD + sum(item.total_tokens for item in batch)
+
+
+def _estimate_input_tokens(text: str) -> int:
+    return math.ceil(_estimate_source_tokens(text) + _SINGLE_PROMPT_TOKEN_OVERHEAD)
+
+
+def _estimate_batch_input_tokens(text: str) -> int:
+    return math.ceil(_estimate_source_tokens(text) + _JSON_ITEM_TOKEN_OVERHEAD)
+
+
+def _estimate_output_tokens(text: str) -> int:
+    return math.ceil(_estimate_source_tokens(text) * _OUTPUT_EXPANSION_FACTOR + _OUTPUT_ITEM_TOKEN_OVERHEAD)
+
+
+def _estimate_source_tokens(text: str) -> float:
+    return max(len(text) / 4, len(text.split()) * 1.3, 1)
+
+
+def _batch_input_token_budget(tpm_limit: int) -> int | None:
     if tpm_limit <= 0:
-        return _MAX_BATCH_TOKENS
-    return max(1, min(math.floor(tpm_limit * 0.8), _MAX_BATCH_TOKENS))
+        return None
+    return max(1, math.floor(tpm_limit * _INPUT_BATCH_HEADROOM))
+
+
+def _batch_output_token_budget(max_output_tokens: int) -> int | None:
+    if max_output_tokens <= 0:
+        return None
+    return max(1, math.floor(max_output_tokens * _OUTPUT_BATCH_HEADROOM))
+
+
+def _exceeds_budget(current_tokens: int, item_tokens: int, budget: int | None) -> bool:
+    return budget is not None and current_tokens + item_tokens > budget

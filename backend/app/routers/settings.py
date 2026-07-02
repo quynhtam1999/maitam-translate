@@ -32,12 +32,15 @@ _QUOTA_FIELDS = {
     "gemini_rpm_limit",
     "gemini_tpm_limit",
     "gemini_rpd_limit",
+    "gemini_max_tokens_per_request",
     "gemma_rpm_limit",
     "gemma_tpm_limit",
     "gemma_rpd_limit",
+    "gemma_max_tokens_per_request",
     "qwen_rpm_limit",
     "qwen_tpm_limit",
     "qwen_rpd_limit",
+    "qwen_max_tokens_per_request",
 }
 
 
@@ -56,12 +59,15 @@ async def read_settings(current_user: CurrentUser):
         gemini_rpm_limit=s.gemini_rpm_limit,
         gemini_tpm_limit=s.gemini_tpm_limit,
         gemini_rpd_limit=s.gemini_rpd_limit,
+        gemini_max_tokens_per_request=s.gemini_max_tokens_per_request,
         gemma_rpm_limit=s.gemma_rpm_limit,
         gemma_tpm_limit=s.gemma_tpm_limit,
         gemma_rpd_limit=s.gemma_rpd_limit,
+        gemma_max_tokens_per_request=s.gemma_max_tokens_per_request,
         qwen_rpm_limit=s.qwen_rpm_limit,
         qwen_tpm_limit=s.qwen_tpm_limit,
         qwen_rpd_limit=s.qwen_rpd_limit,
+        qwen_max_tokens_per_request=s.qwen_max_tokens_per_request,
         cache=_cache_stats(current_user["id"]),
     )
 

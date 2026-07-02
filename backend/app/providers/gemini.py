@@ -39,8 +39,18 @@ class GeminiProvider(BaseProvider):
     def get_limits(self) -> RateLimits:
         s = get_settings()
         if self.name == "gemma":
-            return RateLimits(rpm=s.gemma_rpm_limit, tpm=s.gemma_tpm_limit, rpd=s.gemma_rpd_limit)
-        return RateLimits(rpm=s.gemini_rpm_limit, tpm=s.gemini_tpm_limit, rpd=s.gemini_rpd_limit)
+            return RateLimits(
+                rpm=s.gemma_rpm_limit,
+                tpm=s.gemma_tpm_limit,
+                rpd=s.gemma_rpd_limit,
+                max_output_tokens=s.gemma_max_tokens_per_request,
+            )
+        return RateLimits(
+            rpm=s.gemini_rpm_limit,
+            tpm=s.gemini_tpm_limit,
+            rpd=s.gemini_rpd_limit,
+            max_output_tokens=s.gemini_max_tokens_per_request,
+        )
 
     async def translate(
         self,
@@ -61,6 +71,9 @@ class GeminiProvider(BaseProvider):
             "contents": [{"role": "user", "parts": [{"text": text}]}],
             "generationConfig": {"temperature": 0.2},
         }
+        max_output_tokens = self.get_limits().max_output_tokens
+        if max_output_tokens > 0:
+            body["generationConfig"]["maxOutputTokens"] = max_output_tokens
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, params={"key": api_key}, json=body)
@@ -122,6 +135,9 @@ class GeminiProvider(BaseProvider):
                 "response_mime_type": "application/json",
             },
         }
+        max_output_tokens = self.get_limits().max_output_tokens
+        if max_output_tokens > 0:
+            body["generationConfig"]["maxOutputTokens"] = max_output_tokens
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, params={"key": api_key}, json=body)

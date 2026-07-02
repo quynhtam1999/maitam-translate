@@ -16,6 +16,7 @@ class RateLimits(BaseModel):
     rpm: int
     tpm: int
     rpd: int
+    max_output_tokens: int = 0
 
 
 class TranslationResult(BaseModel):

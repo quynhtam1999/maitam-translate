@@ -20,12 +20,15 @@ class SettingsResponse(BaseModel):
     gemini_rpm_limit: int = 0
     gemini_tpm_limit: int = 0
     gemini_rpd_limit: int = 0
+    gemini_max_tokens_per_request: int = 0
     gemma_rpm_limit: int = 0
     gemma_tpm_limit: int = 0
     gemma_rpd_limit: int = 0
+    gemma_max_tokens_per_request: int = 0
     qwen_rpm_limit: int = 0
     qwen_tpm_limit: int = 0
     qwen_rpd_limit: int = 0
+    qwen_max_tokens_per_request: int = 0
 
     cache: CacheStats = Field(default_factory=CacheStats)
 
@@ -39,12 +42,15 @@ class SettingsUpdateRequest(BaseModel):
     gemini_rpm_limit: int | None = None
     gemini_tpm_limit: int | None = None
     gemini_rpd_limit: int | None = None
+    gemini_max_tokens_per_request: int | None = None
     gemma_rpm_limit: int | None = None
     gemma_tpm_limit: int | None = None
     gemma_rpd_limit: int | None = None
+    gemma_max_tokens_per_request: int | None = None
     qwen_rpm_limit: int | None = None
     qwen_tpm_limit: int | None = None
     qwen_rpd_limit: int | None = None
+    qwen_max_tokens_per_request: int | None = None
 
 
 class ClearResult(BaseModel):

@@ -11,41 +11,48 @@ cỡ chữ cho vừa).
 
 ## Trạng thái hiện tại (cập nhật 2026-07-02)
 
-✅ **Đã kiểm thử end-to-end** (Python 3.14.5 + Node.js 24.18.0):
-- Backend khởi động, `/api/health` trả `{"status":"ok"}`.
-- **Không có đăng ký công khai.** Chỉ **admin** tạo được tài khoản mới (qua bảng "Quản trị"
-  trong giao diện, hoặc `POST /api/auth/users`). Tài khoản admin đầu tiên được tạo tự động
-  lúc khởi động từ `ADMIN_USERNAME`/`ADMIN_PASSWORD` trong `.env` (xem mục Cài đặt bên dưới).
-- User tự đổi mật khẩu qua nút **Đổi mật khẩu** riêng cạnh nút Đăng xuất (mở modal
-  riêng, tách khỏi bảng Cài đặt). Đăng nhập sai nhiều lần liên tiếp sẽ bị khóa tạm
-  thời chống dò mật khẩu.
-- Các API làm việc chính yêu cầu session cookie `HttpOnly`. Đăng nhập **một lần**, phần mềm tự
-  nhớ tài khoản trên thiết bị đó (mặc định 365 ngày, `AUTH_SESSION_DAYS`), và **tự gia hạn mỗi
-  khi còn dùng app** — giống Google/YouTube: chỉ phải đăng nhập lại trên thiết bị mới hoặc khi
-  xóa cookie/cache trình duyệt. Nút **Đăng xuất** (góc trên phải) vẫn xóa phiên ngay lập tức để
-  đăng nhập tài khoản khác.
-- `/api/providers` trả đúng danh sách **Qwen3 235B / Gemini / Gemma** cùng trạng thái key
-  theo tài khoản đang đăng nhập và ghi chú hạn mức miễn phí.
-- Tạo job dịch PDF qua `/api/pdf/jobs` thành công, job chuyển trạng thái đúng luồng
-  (`queued` → `running` → `done` / `paused_quota` / `failed`).
-- **Giao diện dark premium** (nền đen + gradient tím theo tông logo), có **bảng ⚙ Cài đặt**
-  đầy đủ: nhập/xóa API key theo tài khoản, Qwen Base URL theo tài khoản, xem thống kê
-  cache/job riêng của user và nút **xóa cache bản dịch / xóa lịch sử job & file**.
-  Giới hạn quota (RPM/TPM/RPD) hiển thị cho mọi user nhưng **chỉ admin chỉnh được** (cấu hình
-  chung, ghi vào `.env`). Admin có thêm bảng **Quản trị**: tạo/xóa tài khoản, đặt lại mật khẩu hộ user.
+✅ **Tính năng chính đã có**
+- Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
+  có cache theo user để tiếp tục dịch khi hết quota, đổi model hoặc tắt/mở lại app.
+- Dịch văn bản dán tay bằng 1 request cho mỗi lần gửi, giúp RPD không thể thấp hơn nữa ở luồng văn bản.
+- Provider thật: Gemini/Gemma qua Google AI Studio và Qwen3 235B qua ModelScope
+  (OpenAI-compatible). Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
+- PDF overlay bằng PyMuPDF: bóc chữ, xóa chữ gốc tại chỗ, chèn bản dịch, hỗ trợ tài liệu 2 cột,
+  giữ ảnh/biểu đồ và tách bảng vector theo cell/dòng để hạn chế vỡ bố cục.
+- Ảnh/biểu đồ chưa OCR nên không dịch chữ nằm trong ảnh; caption và chữ thật ngoài vùng ảnh vẫn được dịch.
 
-🔑 **API key được lưu riêng theo từng tài khoản** trong SQLite (`backend/storage/cache/auth.db`),
-mã hóa at-rest bằng **AES-GCM** với secret server-side (`AUTH_SECRET_KEY` hoặc `auth_secret.key`).
-Backend chỉ trả về trạng thái/masked key, không trả lại key gốc cho frontend.
+✅ **Auth, tài khoản và cấu hình**
+- Không có đăng ký công khai. Chỉ admin tạo/xóa tài khoản hoặc đặt lại mật khẩu hộ user qua bảng
+  **Quản trị** hoặc API admin.
+- Admin đầu tiên được bootstrap từ `ADMIN_USERNAME`/`ADMIN_PASSWORD` trong `.env` khi database
+  chưa có admin.
+- Session dùng cookie `HttpOnly`, mặc định nhớ đăng nhập 365 ngày (`AUTH_SESSION_DAYS`) và tự gia hạn
+  khi còn dùng app; nút **Đăng xuất** xóa phiên ngay lập tức.
+- API key Gemini/Qwen lưu riêng theo từng tài khoản trong SQLite
+  (`backend/storage/cache/auth.db`), mã hóa at-rest bằng AES-GCM với secret server-side
+  (`AUTH_SECRET_KEY` hoặc `auth_secret.key`). Backend chỉ trả trạng thái/masked key, không trả key gốc.
+- Bảng **Cài đặt** cho phép nhập/xóa API key theo tài khoản, Qwen Base URL theo tài khoản,
+  xem thống kê cache/job và xóa cache/job riêng của user.
 
-✅ **Đã có logic dịch thật**:
-- `backend/app/providers/gemini.py` & `qwen.py` gọi HTTP thật tới Gemini / ModelScope và lấy
-  token usage từ phản hồi để đếm quota cục bộ.
-- `backend/app/services/pdf_overlay.py` bóc chữ bằng PyMuPDF, giữ bố cục PDF gốc bằng overlay,
-  hỗ trợ tài liệu 2 cột, giữ nguyên ảnh/biểu đồ dạng image block, và tách bảng dạng vector
-  theo cell/dòng để không làm vỡ cấu trúc bảng.
-- Ảnh/biểu đồ không được OCR và không dịch nội dung nằm trong ảnh; caption và chữ thật ngoài
-  vùng ảnh vẫn được xử lý như văn bản PDF.
+✅ **Tối ưu RPD mới**
+- Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma, Qwen; các field này ghi
+  vào `.env` và user thường chỉ xem được.
+- Dịch PDF gom batch lớn nhất có thể theo ngân sách input `TPM × 0.8` và ngân sách output
+  `Max token/request × 0.9`; không còn trần cứng 200 đoạn/request hoặc 200.000 token/request.
+- Provider set giới hạn đầu ra khi gọi API (`generationConfig.maxOutputTokens` cho Gemini/Gemma,
+  `max_tokens` cho Qwen), giúp batch lớn ít bị cắt cụt JSON hơn.
+- Dịch văn bản dán tay vẫn giữ 1 request/lần gửi nhưng cũng hưởng lợi từ giới hạn output mới.
+
+✅ **Kiểm tra gần nhất**
+- `backend/.venv/Scripts/python.exe -m compileall backend/app`: pass.
+- Script kiểm tra batching giả lập: tăng TPM/Max token làm số batch giảm rõ rệt, batch nhiều item
+  không vượt ngân sách output.
+- `npm run build` trong `frontend/`: pass.
+- `git diff --check`: pass.
+
+⚠️ **Chưa kiểm thử lại trong lượt cập nhật này**
+- Chưa chạy E2E PDF/text với API key thật và file PDF thật sau tối ưu RPD. Khi có key và file test,
+  cần xác nhận job về `done`, PDF tải được, bố cục giữ ổn và `rpd_used` giảm so với cấu hình cũ.
 
 ### Model Qwen đang dùng
 `Qwen/Qwen3-235B-A22B-Instruct-2507` qua ModelScope (endpoint OpenAI-compatible).
@@ -60,8 +67,10 @@ nên ngưỡng thực tế là 500/ngày (đã đặt `QWEN_RPD_LIMIT=500`).
 - **RPD** (requests per day): khi đạt giới hạn ngày của model/key hiện tại, job ngưng ở trạng
   thái `paused_quota` và báo rõ đã hết giới hạn ngày; người dùng có thể chờ reset ngày hoặc
   đổi model/API key để dịch tiếp nhờ cache đoạn đã dịch.
-- Khi dịch PDF, backend gom nhiều đoạn chưa có cache vào một request batch lớn theo TPM của
-  model (mặc định Gemini/Gemma 250.000 TPM), nhằm giảm số request và tiết kiệm RPD.
+- Khi dịch PDF, backend gom nhiều đoạn chưa có cache vào batch lớn nhất có thể theo **TPM do admin đặt**
+  và **Max token/request** của từng model. TPM giữ batch trong ngân sách phút, còn Max token/request được
+  truyền xuống API (`maxOutputTokens`/`max_tokens`) để hạn chế phản hồi bị cắt cụt, nhờ đó giảm số request
+  và tiết kiệm RPD.
 
 ## Kiến trúc
 
@@ -161,7 +170,7 @@ tài khoản + đặt lại mật khẩu hộ user; logic tài khoản/mật kh�
 `core/auth_store.py`. Frontend gọi `POST /api/auth/change-password` qua modal riêng
 `ChangePasswordModal` (nút cạnh Đăng xuất), tách khỏi bảng Cài đặt. Router `settings`
 (backend) + `SettingsModal` (frontend) đọc/ghi API key mã hóa theo tài khoản, Qwen Base URL
-theo tài khoản, và dọn cache/job của user hiện tại; **giới hạn quota chỉ admin sửa được**
+theo tài khoản, và dọn cache/job của user hiện tại; **giới hạn quota và Max token/request chỉ admin sửa được**
 (ghi vào `.env`). `services/user_data.py` gom logic xóa toàn bộ dữ liệu của một user (dùng khi
 admin xóa tài khoản, hoặc user tự dọn cache/job). Ở gốc còn `start.bat` để khởi động nhanh cả
 hai server.
@@ -185,7 +194,7 @@ hai server.
 | POST | `/api/text/translate` | Dịch văn bản dán tay |
 | GET | `/api/providers` | Danh sách mô hình + trạng thái key của user hiện tại |
 | GET/POST | `/api/glossary` | Xem / tải lên từ điển thuật ngữ (CSV) theo user |
-| GET/PUT | `/api/settings` | Xem / cập nhật API key và Qwen Base URL theo user; quota chỉ admin sửa |
+| GET/PUT | `/api/settings` | Xem / cập nhật API key và Qwen Base URL theo user; quota và Max token/request chỉ admin sửa |
 | POST | `/api/settings/cache/clear` | Xóa cache bản dịch của user hiện tại |
 | POST | `/api/settings/jobs/clear` | Xóa lịch sử job + file PDF của user hiện tại |
 

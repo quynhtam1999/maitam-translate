@@ -28,7 +28,12 @@ class QwenProvider(BaseProvider):
 
     def get_limits(self) -> RateLimits:
         s = get_settings()
-        return RateLimits(rpm=s.qwen_rpm_limit, tpm=s.qwen_tpm_limit, rpd=s.qwen_rpd_limit)
+        return RateLimits(
+            rpm=s.qwen_rpm_limit,
+            tpm=s.qwen_tpm_limit,
+            rpd=s.qwen_rpd_limit,
+            max_output_tokens=s.qwen_max_tokens_per_request,
+        )
 
     async def translate(
         self,
@@ -55,6 +60,9 @@ class QwenProvider(BaseProvider):
             ],
             "temperature": 0.2,
         }
+        max_output_tokens = self.get_limits().max_output_tokens
+        if max_output_tokens > 0:
+            body["max_tokens"] = max_output_tokens
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, headers=headers, json=body)
@@ -108,6 +116,9 @@ class QwenProvider(BaseProvider):
             ],
             "temperature": 0.1,
         }
+        max_output_tokens = self.get_limits().max_output_tokens
+        if max_output_tokens > 0:
+            body["max_tokens"] = max_output_tokens
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, headers=headers, json=body)

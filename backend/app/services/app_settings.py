@@ -13,12 +13,15 @@ _FIELD_TO_ENV = {
     "gemini_rpm_limit": "GEMINI_RPM_LIMIT",
     "gemini_tpm_limit": "GEMINI_TPM_LIMIT",
     "gemini_rpd_limit": "GEMINI_RPD_LIMIT",
+    "gemini_max_tokens_per_request": "GEMINI_MAX_TOKENS_PER_REQUEST",
     "gemma_rpm_limit": "GEMMA_RPM_LIMIT",
     "gemma_tpm_limit": "GEMMA_TPM_LIMIT",
     "gemma_rpd_limit": "GEMMA_RPD_LIMIT",
+    "gemma_max_tokens_per_request": "GEMMA_MAX_TOKENS_PER_REQUEST",
     "qwen_rpm_limit": "QWEN_RPM_LIMIT",
     "qwen_tpm_limit": "QWEN_TPM_LIMIT",
     "qwen_rpd_limit": "QWEN_RPD_LIMIT",
+    "qwen_max_tokens_per_request": "QWEN_MAX_TOKENS_PER_REQUEST",
 }
 
 

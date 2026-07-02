@@ -32,18 +32,21 @@ class Settings(BaseSettings):
     admin_username: str = ""
     admin_password: str = ""
 
-    # Giới hạn quota (RPM / TPM / RPD) từng provider
+    # Quota limits plus per-request output-token ceilings.
     gemini_rpm_limit: int = 15
     gemini_tpm_limit: int = 250_000
     gemini_rpd_limit: int = 1500
-    gemma_rpm_limit: int = 15
-    gemma_tpm_limit: int = 250_000
-    gemma_rpd_limit: int = 1500
+    gemini_max_tokens_per_request: int = 65_536
+    gemma_rpm_limit: int = 30
+    gemma_tpm_limit: int = 15_000
+    gemma_rpd_limit: int = 14_400
+    gemma_max_tokens_per_request: int = 8_192
     qwen_rpm_limit: int = 60
     qwen_tpm_limit: int = 100_000
     # ModelScope free: 2000 lượt/ngày CHUNG mọi model, nhưng tối đa 500 lượt/model/ngày
     # -> với 1 model dịch, ngưỡng thực tế là 500.
     qwen_rpd_limit: int = 500
+    qwen_max_tokens_per_request: int = 16_384
 
     @property
     def cors_origins(self) -> list[str]:
