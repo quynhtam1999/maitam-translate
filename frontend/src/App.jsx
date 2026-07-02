@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import AdminModal from "./components/AdminModal.jsx";
 import AuthPage from "./components/AuthPage.jsx";
+import ChangePasswordModal from "./components/ChangePasswordModal.jsx";
 import FileUpload from "./components/FileUpload.jsx";
 import JobProgress from "./components/JobProgress.jsx";
 import ResultView from "./components/ResultView.jsx";
@@ -18,6 +19,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const [providersVersion, setProvidersVersion] = useState(0);
 
   useEffect(() => {
@@ -60,6 +62,7 @@ export default function App() {
     setError(null);
     setSettingsOpen(false);
     setAdminOpen(false);
+    setPasswordOpen(false);
   };
 
   if (authLoading) {
@@ -109,6 +112,13 @@ export default function App() {
             <span className="gear">⚙</span>
             <span className="settings-btn-label">Cài đặt</span>
           </button>
+          <button
+            className="btn-ghost"
+            onClick={() => setPasswordOpen(true)}
+            title="Đổi mật khẩu"
+          >
+            Đổi mật khẩu
+          </button>
           <button className="btn-ghost header-logout" onClick={handleLogout}>
             Đăng xuất
           </button>
@@ -149,6 +159,11 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={() => setProvidersVersion((v) => v + 1)}
+      />
+
+      <ChangePasswordModal
+        open={passwordOpen}
+        onClose={() => setPasswordOpen(false)}
       />
 
       {user.is_admin && (

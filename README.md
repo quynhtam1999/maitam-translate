@@ -16,8 +16,9 @@ cỡ chữ cho vừa).
 - **Không có đăng ký công khai.** Chỉ **admin** tạo được tài khoản mới (qua bảng "Quản trị"
   trong giao diện, hoặc `POST /api/auth/users`). Tài khoản admin đầu tiên được tạo tự động
   lúc khởi động từ `ADMIN_USERNAME`/`ADMIN_PASSWORD` trong `.env` (xem mục Cài đặt bên dưới).
-- User tự đổi mật khẩu qua nút **Đổi mật khẩu** trong bảng Cài đặt (giống Google/YouTube).
-  Đăng nhập sai nhiều lần liên tiếp sẽ bị khóa tạm thời chống dò mật khẩu.
+- User tự đổi mật khẩu qua nút **Đổi mật khẩu** riêng cạnh nút Đăng xuất (mở modal
+  riêng, tách khỏi bảng Cài đặt). Đăng nhập sai nhiều lần liên tiếp sẽ bị khóa tạm
+  thời chống dò mật khẩu.
 - Các API làm việc chính yêu cầu session cookie `HttpOnly`. Đăng nhập **một lần**, phần mềm tự
   nhớ tài khoản trên thiết bị đó (mặc định 365 ngày, `AUTH_SESSION_DAYS`), và **tự gia hạn mỗi
   khi còn dùng app** — giống Google/YouTube: chỉ phải đăng nhập lại trên thiết bị mới hoặc khi
@@ -28,8 +29,8 @@ cỡ chữ cho vừa).
 - Tạo job dịch PDF qua `/api/pdf/jobs` thành công, job chuyển trạng thái đúng luồng
   (`queued` → `running` → `done` / `paused_quota` / `failed`).
 - **Giao diện dark premium** (nền đen + gradient tím theo tông logo), có **bảng ⚙ Cài đặt**
-  đầy đủ: nhập/xóa API key theo tài khoản, Qwen Base URL theo tài khoản, đổi mật khẩu,
-  xem thống kê cache/job riêng của user và nút **xóa cache bản dịch / xóa lịch sử job & file**.
+  đầy đủ: nhập/xóa API key theo tài khoản, Qwen Base URL theo tài khoản, xem thống kê
+  cache/job riêng của user và nút **xóa cache bản dịch / xóa lịch sử job & file**.
   Giới hạn quota (RPM/TPM/RPD) hiển thị cho mọi user nhưng **chỉ admin chỉnh được** (cấu hình
   chung, ghi vào `.env`). Admin có thêm bảng **Quản trị**: tạo/xóa tài khoản, đặt lại mật khẩu hộ user.
 
@@ -114,6 +115,13 @@ uvicorn app.main:app --reload --port 8000
 >
 > Khi deploy qua HTTPS thật, nhớ đặt `AUTH_COOKIE_SECURE=true` và một `AUTH_SECRET_KEY` dài,
 > riêng cho server (nếu để trống app tự sinh secret cục bộ, không di chuyển được sang máy khác).
+>
+> **Deploy frontend (Vercel) tách domain với backend** là truy cập **cross-site** — trình duyệt
+> chỉ gửi kèm cookie phiên nếu đặt `AUTH_COOKIE_SAMESITE=none` (tự bật kèm `Secure`, nên backend
+> bắt buộc chạy HTTPS). Nếu để mặc định `lax`, giao diện vẫn đăng nhập được nhưng mọi thao tác
+> cần xác thực sau đó (ví dụ lưu API key) sẽ báo lỗi *"Vui lòng đăng nhập..."* do cookie bị chặn.
+> Đồng thời `BACKEND_CORS_ORIGINS` phải liệt kê đúng URL Vercel (không dùng `*` vì có
+> `allow_credentials`), và frontend cần `VITE_API_URL` trỏ tới URL backend HTTPS.
 
 Mở `http://localhost:8000/docs` để xem & thử các API (Swagger UI).
 
@@ -145,16 +153,18 @@ backend/storage/                # uploads/, outputs/, cache/ (auth.db + segments
 frontend/
 └── src/
     ├── api/translate.js        # gọi backend (auth, admin, job, text, providers, settings)
-    └── components/             # AuthPage, AdminModal, SettingsModal, FileUpload, JobProgress, QuotaBadge, ResultView, TextTranslate
+    └── components/             # AuthPage, AdminModal, SettingsModal, ChangePasswordModal, FileUpload, JobProgress, QuotaBadge, ResultView, TextTranslate
 ```
 
 Router `auth` xử lý đăng nhập/đăng xuất/session/đổi mật khẩu, và (chỉ admin) tạo/xóa/liệt kê
 tài khoản + đặt lại mật khẩu hộ user; logic tài khoản/mật khẩu/mã hóa key nằm trong
-`core/auth_store.py`. Router `settings` (backend) + `SettingsModal` (frontend) đọc/ghi API key
-mã hóa theo tài khoản, Qwen Base URL theo tài khoản, và dọn cache/job của user hiện tại;
-**giới hạn quota chỉ admin sửa được** (ghi vào `.env`). `services/user_data.py` gom logic xóa
-toàn bộ dữ liệu của một user (dùng khi admin xóa tài khoản, hoặc user tự dọn cache/job). Ở gốc
-còn `start.bat` để khởi động nhanh cả hai server.
+`core/auth_store.py`. Frontend gọi `POST /api/auth/change-password` qua modal riêng
+`ChangePasswordModal` (nút cạnh Đăng xuất), tách khỏi bảng Cài đặt. Router `settings`
+(backend) + `SettingsModal` (frontend) đọc/ghi API key mã hóa theo tài khoản, Qwen Base URL
+theo tài khoản, và dọn cache/job của user hiện tại; **giới hạn quota chỉ admin sửa được**
+(ghi vào `.env`). `services/user_data.py` gom logic xóa toàn bộ dữ liệu của một user (dùng khi
+admin xóa tài khoản, hoặc user tự dọn cache/job). Ở gốc còn `start.bat` để khởi động nhanh cả
+hai server.
 
 ## API chính
 

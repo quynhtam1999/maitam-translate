@@ -50,18 +50,38 @@ def get_current_admin(current_user: CurrentUser) -> dict:
 AdminUser = Annotated[dict, Depends(get_current_admin)]
 
 
-def set_session_cookie(response: Response, token: str, ttl_seconds: int) -> None:
+def _cookie_flags() -> tuple[str, bool]:
+    """Trả về (samesite, secure) đã chuẩn hoá.
+
+    SameSite=None bắt buộc đi kèm Secure (trình duyệt bỏ cookie nếu thiếu),
+    nên tự bật secure trong trường hợp đó dù config để false.
+    """
     settings = get_settings()
+    samesite = (settings.auth_cookie_samesite or "lax").strip().lower()
+    if samesite not in ("lax", "strict", "none"):
+        samesite = "lax"
+    secure = settings.auth_cookie_secure or samesite == "none"
+    return samesite, secure
+
+
+def set_session_cookie(response: Response, token: str, ttl_seconds: int) -> None:
+    samesite, secure = _cookie_flags()
     response.set_cookie(
         auth_store.AUTH_COOKIE_NAME,
         token,
         httponly=True,
-        secure=settings.auth_cookie_secure,
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
         max_age=max(0, int(ttl_seconds)),
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(auth_store.AUTH_COOKIE_NAME, path="/", samesite="lax")
+    samesite, secure = _cookie_flags()
+    response.delete_cookie(
+        auth_store.AUTH_COOKIE_NAME,
+        path="/",
+        samesite=samesite,
+        secure=secure,
+    )

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     storage_dir: str = "./storage"
     auth_session_days: int = 365
     auth_cookie_secure: bool = False
+    # "lax" cho cùng site (dev localhost). Deploy tách domain (frontend Vercel +
+    # backend riêng) là cross-site -> phải đặt "none" để trình duyệt gửi kèm cookie.
+    auth_cookie_samesite: str = "lax"
     auth_secret_key: str = ""
     admin_username: str = ""
     admin_password: str = ""

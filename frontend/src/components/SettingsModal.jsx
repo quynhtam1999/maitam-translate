@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  changePassword,
   clearJobs,
   clearTranslationCache,
   getSettings,
@@ -31,20 +30,12 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [changingPassword, setChangingPassword] = useState(false);
-  const [passwordError, setPasswordError] = useState(null);
-
   useEffect(() => {
     if (!open) return;
     setError(null);
     setToast(null);
     setGeminiKey("");
     setQwenKey("");
-    setCurrentPassword("");
-    setNewPassword("");
-    setPasswordError(null);
     setLoading(true);
     getSettings()
       .then((s) => {
@@ -145,22 +136,6 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       setError(e.message);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleChangePassword = async (event) => {
-    event.preventDefault();
-    setChangingPassword(true);
-    setPasswordError(null);
-    try {
-      await changePassword(currentPassword, newPassword);
-      setCurrentPassword("");
-      setNewPassword("");
-      flash("Đã đổi mật khẩu");
-    } catch (e) {
-      setPasswordError(e.message);
-    } finally {
-      setChangingPassword(false);
     }
   };
 
@@ -295,37 +270,6 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                   Xóa lịch sử job và file
                 </button>
               </div>
-            </section>
-
-            <section className="settings-section">
-              <h3>Đổi mật khẩu</h3>
-              <form onSubmit={handleChangePassword} className="admin-create-form">
-                <label className="field">
-                  <span>Mật khẩu hiện tại</span>
-                  <input
-                    type="password"
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    autoComplete="current-password"
-                    required
-                  />
-                </label>
-                <label className="field">
-                  <span>Mật khẩu mới</span>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    autoComplete="new-password"
-                    minLength={8}
-                    required
-                  />
-                </label>
-                {passwordError && <p className="error">{passwordError}</p>}
-                <button className="btn-primary" type="submit" disabled={changingPassword}>
-                  {changingPassword ? "Đang đổi..." : "Đổi mật khẩu"}
-                </button>
-              </form>
             </section>
 
             {error && <p className="error">{error}</p>}
