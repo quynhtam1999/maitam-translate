@@ -261,6 +261,25 @@ def get_user_by_session(token: str | None) -> dict[str, Any] | None:
     return _row_to_user(row) if row else None
 
 
+def renew_session_if_stale(token: str | None, ttl_seconds: int, min_remaining_seconds: int) -> bool:
+    """Kéo dài expires_at = now + ttl nếu phiên còn hạn nhưng sắp hết (rolling session).
+
+    Trả về True nếu có gia hạn (để lớp trên set lại cookie).
+    """
+    if not token:
+        return False
+    now = time.time()
+    new_expires = now + ttl_seconds
+    with _lock:
+        cur = _db().execute(
+            """UPDATE sessions SET expires_at = ?
+               WHERE token_hash = ? AND expires_at > ? AND expires_at < ?""",
+            (new_expires, _hash_token(token), now, now + min_remaining_seconds),
+        )
+        _db().commit()
+    return cur.rowcount > 0
+
+
 def delete_session(token: str | None) -> None:
     if not token:
         return

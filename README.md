@@ -18,7 +18,11 @@ cỡ chữ cho vừa).
   lúc khởi động từ `ADMIN_USERNAME`/`ADMIN_PASSWORD` trong `.env` (xem mục Cài đặt bên dưới).
 - User tự đổi mật khẩu qua nút **Đổi mật khẩu** trong bảng Cài đặt (giống Google/YouTube).
   Đăng nhập sai nhiều lần liên tiếp sẽ bị khóa tạm thời chống dò mật khẩu.
-- Các API làm việc chính yêu cầu session cookie `HttpOnly`, tự nhớ đăng nhập theo `AUTH_SESSION_DAYS`.
+- Các API làm việc chính yêu cầu session cookie `HttpOnly`. Đăng nhập **một lần**, phần mềm tự
+  nhớ tài khoản trên thiết bị đó (mặc định 365 ngày, `AUTH_SESSION_DAYS`), và **tự gia hạn mỗi
+  khi còn dùng app** — giống Google/YouTube: chỉ phải đăng nhập lại trên thiết bị mới hoặc khi
+  xóa cookie/cache trình duyệt. Nút **Đăng xuất** (góc trên phải) vẫn xóa phiên ngay lập tức để
+  đăng nhập tài khoản khác.
 - `/api/providers` trả đúng danh sách **Qwen3 235B / Gemini / Gemma** cùng trạng thái key
   theo tài khoản đang đăng nhập và ghi chú hạn mức miễn phí.
 - Tạo job dịch PDF qua `/api/pdf/jobs` thành công, job chuyển trạng thái đúng luồng

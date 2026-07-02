@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # App
     backend_cors_origins: str = "http://localhost:5173"
     storage_dir: str = "./storage"
-    auth_session_days: int = 14
+    auth_session_days: int = 365
     auth_cookie_secure: bool = False
     auth_secret_key: str = ""
     admin_username: str = ""
