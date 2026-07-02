@@ -32,6 +32,18 @@ def get_current_user(request: Request) -> dict:
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 
 
+def get_current_admin(current_user: CurrentUser) -> dict:
+    if not current_user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ quản trị viên mới có quyền thực hiện thao tác này.",
+        )
+    return current_user
+
+
+AdminUser = Annotated[dict, Depends(get_current_admin)]
+
+
 def set_session_cookie(response: Response, token: str, ttl_seconds: int) -> None:
     settings = get_settings()
     response.set_cookie(

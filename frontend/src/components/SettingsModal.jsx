@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  changePassword,
   clearJobs,
   clearTranslationCache,
   getSettings,
@@ -30,12 +31,20 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState(null);
+
   useEffect(() => {
     if (!open) return;
     setError(null);
     setToast(null);
     setGeminiKey("");
     setQwenKey("");
+    setCurrentPassword("");
+    setNewPassword("");
+    setPasswordError(null);
     setLoading(true);
     getSettings()
       .then((s) => {
@@ -139,6 +148,23 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     }
   };
 
+  const handleChangePassword = async (event) => {
+    event.preventDefault();
+    setChangingPassword(true);
+    setPasswordError(null);
+    try {
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      flash("Đã đổi mật khẩu");
+    } catch (e) {
+      setPasswordError(e.message);
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const isAdmin = !!info?.is_admin;
   const cache = info?.cache || {};
   const geminiStatus = info?.gemini_api_key_set
     ? `Đã lưu ${info.gemini_api_key_masked}`
@@ -227,7 +253,10 @@ export default function SettingsModal({ open, onClose, onSaved }) {
             </section>
 
             <section className="settings-section">
-              <h3>Giới hạn quota</h3>
+              <h3>Giới hạn quota {!isAdmin && <span className="tag">chỉ đọc</span>}</h3>
+              {!isAdmin && (
+                <p className="note">Chỉ quản trị viên mới chỉnh được giới hạn quota chung.</p>
+              )}
               <div className="quota-grid">
                 <span className="quota-grid-head" />
                 <span className="quota-grid-head">RPM</span>
@@ -235,19 +264,19 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <span className="quota-grid-head">RPD</span>
 
                 <span className="quota-grid-label">Gemini 3.1 Flash Lite</span>
-                <input type="number" min="0" value={form.gemini_rpm_limit} onChange={setNumField("gemini_rpm_limit")} />
-                <input type="number" min="0" value={form.gemini_tpm_limit} onChange={setNumField("gemini_tpm_limit")} />
-                <input type="number" min="0" value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpm_limit} onChange={setNumField("gemini_rpm_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_tpm_limit} onChange={setNumField("gemini_tpm_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} />
 
                 <span className="quota-grid-label">Gemma</span>
-                <input type="number" min="0" value={form.gemma_rpm_limit} onChange={setNumField("gemma_rpm_limit")} />
-                <input type="number" min="0" value={form.gemma_tpm_limit} onChange={setNumField("gemma_tpm_limit")} />
-                <input type="number" min="0" value={form.gemma_rpd_limit} onChange={setNumField("gemma_rpd_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpm_limit} onChange={setNumField("gemma_rpm_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_tpm_limit} onChange={setNumField("gemma_tpm_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpd_limit} onChange={setNumField("gemma_rpd_limit")} />
 
                 <span className="quota-grid-label">Qwen</span>
-                <input type="number" min="0" value={form.qwen_rpm_limit} onChange={setNumField("qwen_rpm_limit")} />
-                <input type="number" min="0" value={form.qwen_tpm_limit} onChange={setNumField("qwen_tpm_limit")} />
-                <input type="number" min="0" value={form.qwen_rpd_limit} onChange={setNumField("qwen_rpd_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_rpm_limit} onChange={setNumField("qwen_rpm_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_tpm_limit} onChange={setNumField("qwen_tpm_limit")} />
+                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_rpd_limit} onChange={setNumField("qwen_rpd_limit")} />
               </div>
             </section>
 
@@ -266,6 +295,37 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                   Xóa lịch sử job và file
                 </button>
               </div>
+            </section>
+
+            <section className="settings-section">
+              <h3>Đổi mật khẩu</h3>
+              <form onSubmit={handleChangePassword} className="admin-create-form">
+                <label className="field">
+                  <span>Mật khẩu hiện tại</span>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span>Mật khẩu mới</span>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                  />
+                </label>
+                {passwordError && <p className="error">{passwordError}</p>}
+                <button className="btn-primary" type="submit" disabled={changingPassword}>
+                  {changingPassword ? "Đang đổi..." : "Đổi mật khẩu"}
+                </button>
+              </form>
             </section>
 
             {error && <p className="error">{error}</p>}

@@ -1,6 +1,4 @@
 """Settings endpoints for the authenticated account."""
-from pathlib import Path
-
 from fastapi import APIRouter
 
 from ..core import auth_store, job_store
@@ -14,6 +12,7 @@ from ..models.settings import (
 )
 from ..services.app_settings import _count_files, apply_updates
 from ..services.cache import SegmentCache
+from ..services.user_data import purge_jobs_and_files
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -29,12 +28,26 @@ def _cache_stats(user_id: str) -> CacheStats:
     )
 
 
+_QUOTA_FIELDS = {
+    "gemini_rpm_limit",
+    "gemini_tpm_limit",
+    "gemini_rpd_limit",
+    "gemma_rpm_limit",
+    "gemma_tpm_limit",
+    "gemma_rpd_limit",
+    "qwen_rpm_limit",
+    "qwen_tpm_limit",
+    "qwen_rpd_limit",
+}
+
+
 @router.get("", response_model=SettingsResponse)
 async def read_settings(current_user: CurrentUser):
     s = get_settings()
     key_status = auth_store.get_api_key_status(current_user["id"])
     user_qwen_base_url = auth_store.get_qwen_base_url(current_user["id"])
     return SettingsResponse(
+        is_admin=bool(current_user["is_admin"]),
         gemini_api_key_set=bool(key_status["gemini"]["set"]),
         gemini_api_key_masked=str(key_status["gemini"]["masked"]),
         qwen_api_key_set=bool(key_status["qwen"]["set"]),
@@ -67,6 +80,12 @@ async def update_settings(req: SettingsUpdateRequest, current_user: CurrentUser)
     if key_updates:
         auth_store.update_api_keys(current_user["id"], **key_updates)
 
+    if not current_user["is_admin"]:
+        # Quota giới hạn API là cấu hình chung — chỉ admin được sửa.
+        # Bỏ qua thay vì lỗi để không phá luồng lưu API key của user thường.
+        for field in _QUOTA_FIELDS:
+            fields.pop(field, None)
+
     apply_updates(fields)
     return await read_settings(current_user)
 
@@ -80,34 +99,8 @@ async def clear_translation_cache(current_user: CurrentUser):
 
 @router.post("/jobs/clear", response_model=ClearResult)
 async def clear_jobs(current_user: CurrentUser):
-    rows = job_store.delete_jobs_for_user(current_user["id"])
-    removed_files = 0
-    storage_root = get_settings().storage_path
-
-    for row in rows:
-        for raw_path in (row.get("input_path"), row.get("output_path")):
-            if not raw_path:
-                continue
-            path = Path(raw_path)
-            try:
-                resolved = path.resolve()
-                if not _is_inside(resolved, storage_root):
-                    continue
-                if resolved.is_file():
-                    resolved.unlink()
-                    removed_files += 1
-            except OSError:
-                pass
-
+    job_count, removed_files = purge_jobs_and_files(current_user["id"])
     return ClearResult(
-        cleared=len(rows),
-        message=f"Đã xóa {len(rows)} job và {removed_files} file kết quả.",
+        cleared=job_count,
+        message=f"Đã xóa {job_count} job và {removed_files} file kết quả.",
     )
-
-
-def _is_inside(path: Path, parent: Path) -> bool:
-    try:
-        path.relative_to(parent.resolve())
-        return True
-    except ValueError:
-        return False

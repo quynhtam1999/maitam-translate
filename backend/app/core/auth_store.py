@@ -2,7 +2,9 @@
 
 Passwords are stored as PBKDF2-HMAC-SHA256 hashes. Session cookies contain only
 random tokens; the database stores token hashes. Provider API keys are encrypted
-at rest with a server-side secret, then masked in every response.
+at rest with AES-GCM (authenticated) using a server-side secret, then masked in
+every response. Legacy "v1" (HMAC keystream) payloads still decrypt for backward
+compatibility; new writes always use AES-GCM ("v2").
 """
 from __future__ import annotations
 
@@ -17,14 +19,26 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 PBKDF2_ITERATIONS = 210_000
 SESSION_TOKEN_BYTES = 32
-KEY_NONCE_BYTES = 16
+KEY_NONCE_BYTES = 16       # legacy v1 keystream nonce
+GCM_NONCE_BYTES = 12       # AES-GCM nonce
 AUTH_COOKIE_NAME = "mtt_session"
+
+# Chống dò mật khẩu: khoá tạm theo tên đăng nhập sau nhiều lần sai liên tiếp.
+LOGIN_MAX_ATTEMPTS = 8
+LOGIN_LOCKOUT_SECONDS = 300
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
 _secret: bytes | None = None
+
+# username_norm -> {"count": int, "until": float}. Đủ nhẹ cho công cụ nội bộ.
+_login_attempts: dict[str, dict[str, float]] = {}
+_attempts_lock = threading.Lock()
 
 
 def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
@@ -33,6 +47,8 @@ def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
     _secret = _load_or_create_secret(secret_path, configured_secret)
     _conn = sqlite3.connect(str(db_path), check_same_thread=False)
     _conn.row_factory = sqlite3.Row
+    # SQLite tắt khoá ngoại mặc định -> bật để ON DELETE CASCADE hoạt động.
+    _conn.execute("PRAGMA foreign_keys = ON")
     with _lock:
         _db().execute(
             """
@@ -41,6 +57,7 @@ def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
                 username      TEXT NOT NULL,
                 username_norm TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
+                is_admin      INTEGER NOT NULL DEFAULT 0,
                 created_at    REAL NOT NULL
             )
             """
@@ -69,6 +86,9 @@ def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
             """
         )
         _db().execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+        user_columns = {row[1] for row in _db().execute("PRAGMA table_info(users)").fetchall()}
+        if "is_admin" not in user_columns:
+            _db().execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
         columns = {
             row[1] for row in _db().execute("PRAGMA table_info(user_api_keys)").fetchall()
         }
@@ -83,7 +103,7 @@ def _db() -> sqlite3.Connection:
     return _conn
 
 
-def create_user(username: str, password: str) -> dict[str, Any]:
+def create_user(username: str, password: str, is_admin: bool = False) -> dict[str, Any]:
     username = username.strip()
     norm = _normalize_username(username)
     if len(password) < 8:
@@ -94,23 +114,115 @@ def create_user(username: str, password: str) -> dict[str, Any]:
     try:
         with _lock:
             _db().execute(
-                """INSERT INTO users (id, username, username_norm, password_hash, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (user_id, username, norm, _hash_password(password), now),
+                """INSERT INTO users (id, username, username_norm, password_hash, is_admin, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, username, norm, _hash_password(password), int(is_admin), now),
             )
             _db().commit()
     except sqlite3.IntegrityError as exc:
         raise ValueError("Ten dang nhap da ton tai") from exc
-    return {"id": user_id, "username": username, "created_at": now}
+    return {"id": user_id, "username": username, "is_admin": is_admin, "created_at": now}
+
+
+def ensure_admin(username: str, password: str) -> None:
+    """Bootstrap the first admin account from env vars, idempotently.
+
+    If no admin exists yet: creates the account (or promotes it if the
+    username already exists). Never overwrites an existing password.
+    """
+    username = username.strip()
+    if not username or not password:
+        return
+    if count_admins() > 0:
+        return
+    row = _get_user_by_norm(_normalize_username(username))
+    if row is None:
+        create_user(username, password, is_admin=True)
+        return
+    with _lock:
+        _db().execute("UPDATE users SET is_admin = 1 WHERE id = ?", (row["id"],))
+        _db().commit()
+
+
+def count_admins() -> int:
+    with _lock:
+        row = _db().execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()
+    return int(row[0]) if row else 0
+
+
+def list_users() -> list[dict[str, Any]]:
+    with _lock:
+        rows = _db().execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+    return [_row_to_user(row) for row in rows]
+
+
+def delete_user(user_id: str) -> bool:
+    with _lock:
+        cur = _db().execute("DELETE FROM users WHERE id = ?", (user_id,))
+        _db().commit()
+    return cur.rowcount > 0
+
+
+def set_password(user_id: str, new_password: str) -> None:
+    if len(new_password) < 8:
+        raise ValueError("Mat khau can toi thieu 8 ky tu")
+    with _lock:
+        _db().execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (_hash_password(new_password), user_id),
+        )
+        _db().commit()
+
+
+def delete_sessions_for_user(user_id: str, keep_token: str | None = None) -> None:
+    keep_hash = _hash_token(keep_token) if keep_token else None
+    with _lock:
+        if keep_hash:
+            _db().execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                (user_id, keep_hash),
+            )
+        else:
+            _db().execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        _db().commit()
 
 
 def verify_user(username: str, password: str) -> dict[str, Any] | None:
-    row = _get_user_by_norm(_normalize_username(username))
-    if row is None:
+    norm = _normalize_username(username)
+    if _is_locked_out(norm):
+        raise PermissionError("Tài khoản tạm khóa do đăng nhập sai nhiều lần. Thử lại sau.")
+    row = _get_user_by_norm(norm)
+    if row is None or not _verify_password(password, row["password_hash"]):
+        _record_failed_login(norm)
         return None
-    if not _verify_password(password, row["password_hash"]):
-        return None
+    _clear_failed_login(norm)
     return _row_to_user(row)
+
+
+def _is_locked_out(norm: str) -> bool:
+    with _attempts_lock:
+        entry = _login_attempts.get(norm)
+        if not entry:
+            return False
+        if entry["count"] < LOGIN_MAX_ATTEMPTS:
+            return False
+        if time.time() >= entry["until"]:
+            del _login_attempts[norm]
+            return False
+        return True
+
+
+def _record_failed_login(norm: str) -> None:
+    with _attempts_lock:
+        entry = _login_attempts.setdefault(norm, {"count": 0, "until": 0.0})
+        entry["count"] += 1
+        if entry["count"] >= LOGIN_MAX_ATTEMPTS:
+            entry["until"] = time.time() + LOGIN_LOCKOUT_SECONDS
+
+
+def _clear_failed_login(norm: str) -> None:
+    with _attempts_lock:
+        _login_attempts.pop(norm, None)
 
 
 def get_user(user_id: str) -> dict[str, Any] | None:
@@ -251,7 +363,12 @@ def _get_user_by_norm(norm: str) -> sqlite3.Row | None:
 
 
 def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
-    return {"id": row["id"], "username": row["username"], "created_at": row["created_at"]}
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "is_admin": bool(row["is_admin"]),
+        "created_at": row["created_at"],
+    }
 
 
 def _normalize_username(username: str) -> str:
@@ -316,17 +433,32 @@ def _derive_key(label: bytes) -> bytes:
 
 
 def _seal(plain_text: str) -> str:
+    """Encrypt with AES-GCM ("v2"). New writes always use this format."""
     data = plain_text.encode("utf-8")
-    nonce = secrets.token_bytes(KEY_NONCE_BYTES)
-    cipher = _xor_stream(data, _derive_key(b"mtt-key-encryption-v1"), nonce)
-    payload = b"v1" + nonce + cipher
-    mac = hmac.new(_derive_key(b"mtt-key-auth-v1"), payload, hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(payload + mac).decode("ascii")
+    nonce = secrets.token_bytes(GCM_NONCE_BYTES)
+    aesgcm = AESGCM(_derive_key(b"mtt-key-encryption-v2")[:32])
+    cipher = aesgcm.encrypt(nonce, data, None)
+    payload = b"v2" + nonce + cipher
+    return base64.urlsafe_b64encode(payload).decode("ascii")
 
 
 def _open(sealed: str) -> str:
     raw = base64.urlsafe_b64decode(sealed.encode("ascii"))
-    if len(raw) < 2 + KEY_NONCE_BYTES + 32 or raw[:2] != b"v1":
+    if len(raw) < 2:
+        raise ValueError("Invalid encrypted key payload")
+    version, body = raw[:2], raw[2:]
+    if version == b"v2":
+        nonce, cipher = body[:GCM_NONCE_BYTES], body[GCM_NONCE_BYTES:]
+        aesgcm = AESGCM(_derive_key(b"mtt-key-encryption-v2")[:32])
+        return aesgcm.decrypt(nonce, cipher, None).decode("utf-8")
+    if version == b"v1":
+        return _open_v1(raw)
+    raise ValueError("Unknown encrypted key payload version")
+
+
+def _open_v1(raw: bytes) -> str:
+    """Legacy HMAC-keystream format, kept read-only for previously saved keys."""
+    if len(raw) < 2 + KEY_NONCE_BYTES + 32:
         raise ValueError("Invalid encrypted key payload")
     payload, mac = raw[:-32], raw[-32:]
     expected = hmac.new(_derive_key(b"mtt-key-auth-v1"), payload, hashlib.sha256).digest()
@@ -340,7 +472,7 @@ def _open(sealed: str) -> str:
 def _safe_open(sealed: str) -> str:
     try:
         return _open(sealed)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, InvalidTag):
         return ""
 
 

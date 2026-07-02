@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AdminModal from "./components/AdminModal.jsx";
 import AuthPage from "./components/AuthPage.jsx";
 import FileUpload from "./components/FileUpload.jsx";
 import JobProgress from "./components/JobProgress.jsx";
@@ -16,6 +17,7 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState(null);
   const [error, setError] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [providersVersion, setProvidersVersion] = useState(0);
 
   useEffect(() => {
@@ -57,6 +59,7 @@ export default function App() {
     setJobStatus(null);
     setError(null);
     setSettingsOpen(false);
+    setAdminOpen(false);
   };
 
   if (authLoading) {
@@ -88,6 +91,15 @@ export default function App() {
           <span className="user-chip" title={user.username}>
             {user.username}
           </span>
+          {user.is_admin && (
+            <button
+              className="btn-ghost"
+              onClick={() => setAdminOpen(true)}
+              title="Quản trị tài khoản"
+            >
+              Quản trị
+            </button>
+          )}
           <button
             className="settings-btn"
             onClick={() => setSettingsOpen(true)}
@@ -138,6 +150,14 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         onSaved={() => setProvidersVersion((v) => v + 1)}
       />
+
+      {user.is_admin && (
+        <AdminModal
+          open={adminOpen}
+          onClose={() => setAdminOpen(false)}
+          currentUserId={user.id}
+        />
+      )}
     </div>
   );
 }

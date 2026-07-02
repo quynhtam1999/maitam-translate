@@ -10,6 +10,7 @@ class CacheStats(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    is_admin: bool = False
     gemini_api_key_set: bool = False
     gemini_api_key_masked: str = ""
     qwen_api_key_set: bool = False

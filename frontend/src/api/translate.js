@@ -31,18 +31,47 @@ export async function login(username, password) {
   );
 }
 
-export async function register(username, password) {
+export async function logout() {
+  return handle(await apiFetch("/auth/logout", { method: "POST" }));
+}
+
+export async function changePassword(currentPassword, newPassword) {
   return handle(
-    await apiFetch("/auth/register", {
+    await apiFetch("/auth/change-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     })
   );
 }
 
-export async function logout() {
-  return handle(await apiFetch("/auth/logout", { method: "POST" }));
+// --- Admin: user management ---
+export async function listUsers() {
+  return handle(await apiFetch("/auth/users"));
+}
+
+export async function createUser({ username, password, isAdmin = false }) {
+  return handle(
+    await apiFetch("/auth/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, is_admin: isAdmin }),
+    })
+  );
+}
+
+export async function deleteUser(userId) {
+  return handle(await apiFetch(`/auth/users/${userId}`, { method: "DELETE" }));
+}
+
+export async function resetUserPassword(userId, newPassword) {
+  return handle(
+    await apiFetch(`/auth/users/${userId}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_password: newPassword }),
+    })
+  );
 }
 
 // --- Providers ---

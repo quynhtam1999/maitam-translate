@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
         settings.cache_dir / "auth_secret.key",
         settings.auth_secret_key,
     )
+    auth_store.ensure_admin(settings.admin_username, settings.admin_password)
     yield
 
 

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     auth_session_days: int = 14
     auth_cookie_secure: bool = False
     auth_secret_key: str = ""
+    admin_username: str = ""
+    admin_password: str = ""
 
     # Giới hạn quota (RPM / TPM / RPD) từng provider
     gemini_rpm_limit: int = 15

@@ -710,6 +710,43 @@ button:disabled {
   font-size: 0.86rem;
 }
 
+/* Admin panel */
+.admin-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+.admin-create-form .field {
+  width: 100%;
+}
+
+.admin-user-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.admin-user-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.admin-user-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+.admin-user-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* Responsive */
 @media (max-width: 560px) {
   .settings-btn-label {
