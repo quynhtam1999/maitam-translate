@@ -25,6 +25,77 @@
   color: var(--ink);
 }
 
+/* ---------- Auth ---------- */
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  color: var(--ink);
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.auth-panel {
+  width: min(100%, 420px);
+  padding: 1.6rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.auth-panel.compact {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.auth-logo {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  border-radius: 14px;
+  filter: drop-shadow(0 4px 14px rgba(168, 85, 247, 0.5));
+}
+
+.auth-panel h1 {
+  margin: 0.65rem 0 0;
+  font-size: 1.5rem;
+}
+
+.auth-subtitle {
+  margin: 0.35rem 0 1.1rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.auth-tabs button {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  border-radius: 10px;
+}
+
+.auth-tabs button.active {
+  color: #fff;
+  background: rgba(168, 85, 247, 0.22);
+  border-color: var(--brand);
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
 /* ---------- Header ---------- */
 .app-header {
   display: flex;
@@ -91,6 +162,32 @@
   font-size: 0.9rem;
   color: var(--ink);
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.header-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.user-chip {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.86rem;
+}
+
+.header-logout {
+  padding: 0.52rem 0.8rem;
 }
 
 .settings-btn:hover {
@@ -446,6 +543,15 @@ button:disabled {
   color: var(--ink);
 }
 
+.key-status {
+  color: var(--muted) !important;
+  font-size: 0.78rem !important;
+}
+
+.modal-loading {
+  padding: 1.3rem 1.5rem;
+}
+
 .field input[type="text"],
 .field input[type="password"],
 .field input[type="number"] {
@@ -608,6 +714,13 @@ button:disabled {
 @media (max-width: 560px) {
   .settings-btn-label {
     display: none;
+  }
+  .app-header {
+    align-items: flex-start;
+  }
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
   .text-columns {
     grid-template-columns: 1fr;

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # App
     backend_cors_origins: str = "http://localhost:5173"
     storage_dir: str = "./storage"
+    auth_session_days: int = 14
+    auth_cookie_secure: bool = False
+    auth_secret_key: str = ""
 
     # Giới hạn quota (RPM / TPM / RPD) từng provider
     gemini_rpm_limit: int = 15

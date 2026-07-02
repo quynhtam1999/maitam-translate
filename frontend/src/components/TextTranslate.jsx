@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 import { listProviders, translateText } from "../api/translate.js";
-import { hasLocalKey, localKeyKindForProvider } from "../api/keys.js";
 import QuotaBadge from "./QuotaBadge.jsx";
 
 function isUsable(p) {
-  const kind = localKeyKindForProvider(p.name);
-  return p.key_configured || (kind && hasLocalKey(kind));
+  return p.key_configured;
 }
 
 export default function TextTranslate({ refreshKey }) {
@@ -21,8 +19,9 @@ export default function TextTranslate({ refreshKey }) {
     listProviders().then((list) => {
       setProviders(list);
       setProvider((prev) => {
-        if (prev && list.some((p) => p.name === prev)) return prev;
-        return list.length ? list[0].name : "";
+        if (prev && list.some((p) => p.name === prev && isUsable(p))) return prev;
+        const firstUsable = list.find(isUsable);
+        return firstUsable ? firstUsable.name : "";
       });
     });
   }, [refreshKey]);

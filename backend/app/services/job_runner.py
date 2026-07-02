@@ -10,19 +10,23 @@ from .pipeline import translate_pdf
 
 async def run_pdf_job(
     job_id: str,
+    user_id: str,
     input_path: str,
     output_path: str,
     provider_name: str,
     target_lang: str = "vi",
     force_retranslate: bool = False,
     api_key: str | None = None,
+    provider_options: dict | None = None,
 ) -> None:
     await translate_pdf(
         job_id=job_id,
+        user_id=user_id,
         input_path=Path(input_path),
         output_path=Path(output_path),
         provider_name=provider_name,
         target_lang=target_lang,
         force_retranslate=force_retranslate,
         api_key=api_key,
+        provider_options=provider_options,
     )

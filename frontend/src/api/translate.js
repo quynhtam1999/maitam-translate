@@ -1,32 +1,67 @@
-import { authHeadersForProvider } from "./keys.js";
-
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
 async function handle(res) {
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || err.error || `Lỗi ${res.status}`);
+    throw new Error(data.detail || data.error || `Lỗi ${res.status}`);
   }
-  return res.json();
+  return data;
+}
+
+function apiFetch(path, options = {}) {
+  return fetch(`${API_URL}${path}`, {
+    credentials: "include",
+    ...options,
+    headers: options.headers || undefined,
+  });
+}
+
+// --- Auth ---
+export async function getMe() {
+  return handle(await apiFetch("/auth/me"));
+}
+
+export async function login(username, password) {
+  return handle(
+    await apiFetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    })
+  );
+}
+
+export async function register(username, password) {
+  return handle(
+    await apiFetch("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    })
+  );
+}
+
+export async function logout() {
+  return handle(await apiFetch("/auth/logout", { method: "POST" }));
 }
 
 // --- Providers ---
 export async function listProviders() {
-  return handle(await fetch(`${API_URL}/providers`));
+  return handle(await apiFetch("/providers"));
 }
 
 export async function getQuota(provider) {
-  return handle(await fetch(`${API_URL}/providers/${provider}/quota`));
+  return handle(await apiFetch(`/providers/${provider}/quota`));
 }
 
-// --- Cài đặt (API key, base URL, quota, dọn cache) ---
+// --- Settings ---
 export async function getSettings() {
-  return handle(await fetch(`${API_URL}/settings`));
+  return handle(await apiFetch("/settings"));
 }
 
 export async function updateSettings(patch) {
   return handle(
-    await fetch(`${API_URL}/settings`, {
+    await apiFetch("/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -35,38 +70,41 @@ export async function updateSettings(patch) {
 }
 
 export async function clearTranslationCache() {
-  return handle(await fetch(`${API_URL}/settings/cache/clear`, { method: "POST" }));
+  return handle(await apiFetch("/settings/cache/clear", { method: "POST" }));
 }
 
 export async function clearJobs() {
-  return handle(await fetch(`${API_URL}/settings/jobs/clear`, { method: "POST" }));
+  return handle(await apiFetch("/settings/jobs/clear", { method: "POST" }));
 }
 
-// --- Dịch PDF (mẫu job) ---
-export async function createPdfJob(file, provider, { targetLang = "vi", forceRetranslate = false } = {}) {
+// --- PDF jobs ---
+export async function createPdfJob(
+  file,
+  provider,
+  { targetLang = "vi", forceRetranslate = false } = {}
+) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("provider", provider);
   formData.append("target_lang", targetLang);
   formData.append("force_retranslate", String(forceRetranslate));
   return handle(
-    await fetch(`${API_URL}/pdf/jobs`, {
+    await apiFetch("/pdf/jobs", {
       method: "POST",
-      headers: authHeadersForProvider(provider),
       body: formData,
     })
   );
 }
 
 export async function getJobStatus(jobId) {
-  return handle(await fetch(`${API_URL}/pdf/jobs/${jobId}`));
+  return handle(await apiFetch(`/pdf/jobs/${jobId}`));
 }
 
 export async function resumeJob(jobId, provider) {
   return handle(
-    await fetch(`${API_URL}/pdf/jobs/${jobId}/resume`, {
+    await apiFetch(`/pdf/jobs/${jobId}/resume`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeadersForProvider(provider) },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider }),
     })
   );
@@ -76,18 +114,17 @@ export function downloadUrl(jobId) {
   return `${API_URL}/pdf/jobs/${jobId}/download`;
 }
 
-// --- Dịch văn bản dán tay ---
+// --- Text translation ---
 export async function translateText(text, provider, targetLang = "vi") {
   return handle(
-    await fetch(`${API_URL}/text/translate`, {
+    await apiFetch("/text/translate", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeadersForProvider(provider) },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, provider, target_lang: targetLang }),
     })
   );
 }
 
-// --- Helper: poll trạng thái job tới khi kết thúc ---
 const TERMINAL = ["done", "failed", "paused_quota"];
 
 export async function pollJobUntilDone(jobId, onProgress, intervalMs = 2000) {

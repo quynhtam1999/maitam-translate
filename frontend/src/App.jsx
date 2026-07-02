@@ -1,19 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import AuthPage from "./components/AuthPage.jsx";
 import FileUpload from "./components/FileUpload.jsx";
 import JobProgress from "./components/JobProgress.jsx";
 import ResultView from "./components/ResultView.jsx";
 import TextTranslate from "./components/TextTranslate.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
-import { createPdfJob, pollJobUntilDone } from "./api/translate.js";
+import { createPdfJob, getMe, logout, pollJobUntilDone } from "./api/translate.js";
 import "./App.css";
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [tab, setTab] = useState("pdf");
   const [loading, setLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState(null);
   const [error, setError] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [providersVersion, setProvidersVersion] = useState(0);
+
+  useEffect(() => {
+    getMe()
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setAuthLoading(false));
+  }, []);
 
   const runPolling = (jobId) => {
     pollJobUntilDone(jobId, (s) => setJobStatus(s))
@@ -41,6 +51,29 @@ export default function App() {
     }
   };
 
+  const handleLogout = async () => {
+    await logout().catch(() => {});
+    setUser(null);
+    setJobStatus(null);
+    setError(null);
+    setSettingsOpen(false);
+  };
+
+  if (authLoading) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-panel compact">
+          <img src="/logo.png" alt="Mai Tam Translate" className="auth-logo" />
+          <p className="muted">Đang kiểm tra phiên đăng nhập...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthPage onAuthed={setUser} />;
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -48,18 +81,26 @@ export default function App() {
         <div className="app-header-text">
           <h1>Mai Tam Translate</h1>
           <p className="subtitle">
-            Dịch tài liệu PDF y khoa sang tiếng Việt — giữ nguyên bố cục
+            Dịch tài liệu PDF y khoa sang tiếng Việt - giữ nguyên bố cục
           </p>
         </div>
-        <button
-          className="settings-btn"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="Cài đặt"
-          title="Cài đặt"
-        >
-          <span className="gear">⚙</span>
-          <span className="settings-btn-label">Cài đặt</span>
-        </button>
+        <div className="header-actions">
+          <span className="user-chip" title={user.username}>
+            {user.username}
+          </span>
+          <button
+            className="settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Cài đặt"
+            title="Cài đặt"
+          >
+            <span className="gear">⚙</span>
+            <span className="settings-btn-label">Cài đặt</span>
+          </button>
+          <button className="btn-ghost header-logout" onClick={handleLogout}>
+            Đăng xuất
+          </button>
+        </div>
       </header>
 
       <nav className="tabs">
@@ -89,7 +130,7 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        <span>Engine: Gemini / Gemma · Qwen3 235B</span>
+        <span>Engine: Gemini / Gemma - Qwen3 235B</span>
       </footer>
 
       <SettingsModal

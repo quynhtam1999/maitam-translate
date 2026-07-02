@@ -24,16 +24,18 @@ except ImportError:
 
 async def translate_pdf(
     job_id: str,
+    user_id: str,
     input_path: Path,
     output_path: Path,
     provider_name: str,
     target_lang: str = "vi",
     force_retranslate: bool = False,
     api_key: str | None = None,
+    provider_options: dict | None = None,
 ) -> None:
     settings = get_settings()
-    cache = SegmentCache(settings.cache_dir / "segments.db")
-    glossary = load_glossary(settings.glossary_dir / "glossary.csv")
+    cache = SegmentCache(settings.cache_dir / "segments.db", user_id=user_id)
+    glossary = load_glossary(settings.glossary_dir / user_id / "glossary.csv")
 
     try:
         job_store.update_job(job_id, status=JobStatus.RUNNING, provider=provider_name)
@@ -42,7 +44,13 @@ async def translate_pdf(
             raise RuntimeError("Chưa cài PyMuPDF (pip install pymupdf)")
 
         provider = get_provider(provider_name)
-        translator = Translator(provider, cache, glossary)
+        translator = Translator(
+            provider,
+            cache,
+            glossary,
+            quota_scope=user_id,
+            provider_options=provider_options,
+        )
 
         doc = fitz.open(str(input_path))
         segments = collect_segments(doc)  # TODO: đã stub

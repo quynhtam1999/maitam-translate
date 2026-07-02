@@ -39,28 +39,43 @@ class QuotaTracker:
         # đếm theo ngày: (provider) -> (ngày_reset_iso, requests, tokens)
         self._daily: dict[str, dict] = defaultdict(lambda: {"day": None, "requests": 0, "tokens": 0})
 
-    def record(self, provider: str, tokens_in: int, tokens_out: int) -> None:
+    def record(
+        self,
+        provider: str,
+        tokens_in: int,
+        tokens_out: int,
+        scope: str | None = None,
+    ) -> None:
+        bucket = self._bucket(provider, scope)
         now = time.time()
         total = tokens_in + tokens_out
         with self._lock:
-            self._events[provider].append(_Event(now, total))
-            self._prune(provider, now)
+            self._events[bucket].append(_Event(now, total))
+            self._prune(bucket, now)
 
             day = self._current_reset_day(provider)
-            d = self._daily[provider]
+            d = self._daily[bucket]
             if d["day"] != day:
                 d["day"], d["requests"], d["tokens"] = day, 0, 0
             d["requests"] += 1
             d["tokens"] += total
 
-    def snapshot(self, provider: str, rpm_limit: int, tpm_limit: int, rpd_limit: int) -> QuotaSnapshot:
+    def snapshot(
+        self,
+        provider: str,
+        rpm_limit: int,
+        tpm_limit: int,
+        rpd_limit: int,
+        scope: str | None = None,
+    ) -> QuotaSnapshot:
+        bucket = self._bucket(provider, scope)
         now = time.time()
         with self._lock:
-            self._prune(provider, now)
-            events = self._events[provider]
+            self._prune(bucket, now)
+            events = self._events[bucket]
             rpm_used = len(events)
             tpm_used = sum(e.tokens for e in events)
-            d = self._daily[provider]
+            d = self._daily[bucket]
             day = self._current_reset_day(provider)
             rpd_used = d["requests"] if d["day"] == day else 0
 
@@ -82,15 +97,17 @@ class QuotaTracker:
         tpm_limit: int,
         rpd_limit: int,
         estimated_tokens: int = 0,
+        scope: str | None = None,
     ) -> float | None:
         """Return seconds to wait for minute limits, 0 if ready, None if RPD is exhausted."""
+        bucket = self._bucket(provider, scope)
         now = time.time()
         with self._lock:
-            self._prune(provider, now)
-            if rpd_limit > 0 and self._daily_requests_locked(provider) >= rpd_limit:
+            self._prune(bucket, now)
+            if rpd_limit > 0 and self._daily_requests_locked(provider, bucket) >= rpd_limit:
                 return None
 
-            events = self._events[provider]
+            events = self._events[bucket]
             waits: list[float] = []
 
             if rpm_limit > 0 and len(events) >= rpm_limit:
@@ -115,15 +132,19 @@ class QuotaTracker:
             return max(waits, default=0.0)
 
     # --- helpers ---
-    def _prune(self, provider: str, now: float) -> None:
-        q = self._events[provider]
+    def _prune(self, bucket: str, now: float) -> None:
+        q = self._events[bucket]
         while q and now - q[0].ts > 60:
             q.popleft()
 
-    def _daily_requests_locked(self, provider: str) -> int:
-        d = self._daily[provider]
+    def _daily_requests_locked(self, provider: str, bucket: str) -> int:
+        d = self._daily[bucket]
         day = self._current_reset_day(provider)
         return d["requests"] if d["day"] == day else 0
+
+    @staticmethod
+    def _bucket(provider: str, scope: str | None) -> str:
+        return f"{scope}:{provider}" if scope else provider
 
     @staticmethod
     def _seconds_until_event_expires(event: _Event, now: float) -> float:

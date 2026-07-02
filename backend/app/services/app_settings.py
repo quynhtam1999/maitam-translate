@@ -1,8 +1,7 @@
-"""Đọc/ghi cấu hình runtime vào file .env và làm mới cache get_settings().
+"""Runtime .env updates for global provider settings.
 
-Cho phép người dùng nhập API key / base URL / giới hạn quota ngay trong giao diện
-(⚙ Cài đặt) mà không phải sửa .env tay rồi khởi động lại. Ghi giữ nguyên comment,
-chỉ thay giá trị của khóa tương ứng (hoặc thêm mới ở cuối nếu chưa có).
+Per-user API keys are intentionally not written here. They are stored encrypted
+in auth_store and scoped to the authenticated account.
 """
 from pathlib import Path
 
@@ -10,12 +9,7 @@ from ..core.config import BACKEND_ROOT, get_settings
 
 ENV_PATH = BACKEND_ROOT / ".env"
 
-# Ánh xạ tên trường (snake_case) -> tên biến môi trường trong .env.
-# Cố ý KHÔNG có gemini_api_key/qwen_api_key — key chỉ cấu hình qua Render env
-# (server) hoặc do người dùng tự nhập ở trình duyệt (per-request header), không
-# ghi qua endpoint này để tránh một người dùng public site ghi đè key người khác.
 _FIELD_TO_ENV = {
-    "qwen_base_url": "QWEN_BASE_URL",
     "gemini_rpm_limit": "GEMINI_RPM_LIMIT",
     "gemini_tpm_limit": "GEMINI_TPM_LIMIT",
     "gemini_rpd_limit": "GEMINI_RPD_LIMIT",
@@ -29,16 +23,14 @@ _FIELD_TO_ENV = {
 
 
 def mask_key(key: str) -> str:
-    """Che API key khi trả về giao diện: chỉ lộ 4 ký tự cuối."""
     if not key:
         return ""
     if len(key) <= 4:
-        return "••••"
-    return "••••" + key[-4:]
+        return "****"
+    return "****" + key[-4:]
 
 
 def _write_env(updates: dict[str, str]) -> None:
-    """Cập nhật các KEY=VALUE trong .env, giữ nguyên comment & thứ tự dòng."""
     lines: list[str] = []
     if ENV_PATH.exists():
         lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -54,7 +46,6 @@ def _write_env(updates: dict[str, str]) -> None:
                 continue
         out.append(line)
 
-    # Khóa chưa từng có trong file -> thêm ở cuối.
     if remaining:
         if out and out[-1].strip() != "":
             out.append("")
@@ -65,10 +56,6 @@ def _write_env(updates: dict[str, str]) -> None:
 
 
 def apply_updates(fields: dict[str, object]) -> None:
-    """Nhận dict {field_name: value} (chỉ các trường được đặt), ghi vào .env.
-
-    Sau khi ghi, xóa lru_cache của get_settings() để lần đọc kế tiếp lấy giá trị mới.
-    """
     env_updates: dict[str, str] = {}
     for field, value in fields.items():
         env_name = _FIELD_TO_ENV.get(field)

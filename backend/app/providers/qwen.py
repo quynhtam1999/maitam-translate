@@ -36,6 +36,7 @@ class QwenProvider(BaseProvider):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
+        provider_options: dict | None = None,
     ) -> TranslationResult:
         settings = get_settings()
         key = api_key or settings.qwen_api_key
@@ -43,7 +44,8 @@ class QwenProvider(BaseProvider):
             raise RuntimeError("Chưa có API key cho Qwen — nhập trong ⚙ Cài đặt")
 
         system_prompt = build_system_prompt(target_lang, glossary_hints)
-        url = f"{settings.qwen_base_url.rstrip('/')}/chat/completions"
+        base_url = (provider_options or {}).get("qwen_base_url") or settings.qwen_base_url
+        url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {key}"}
         body = {
             "model": self.model,
@@ -83,6 +85,7 @@ class QwenProvider(BaseProvider):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
+        provider_options: dict | None = None,
     ) -> BatchTranslationResult:
         if not texts:
             return BatchTranslationResult(texts=[])
@@ -94,7 +97,8 @@ class QwenProvider(BaseProvider):
 
         system_prompt = build_batch_system_prompt(target_lang, glossary_hints)
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
-        url = f"{settings.qwen_base_url.rstrip('/')}/chat/completions"
+        base_url = (provider_options or {}).get("qwen_base_url") or settings.qwen_base_url
+        url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {key}"}
         body = {
             "model": self.model,

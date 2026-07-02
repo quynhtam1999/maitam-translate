@@ -1,16 +1,15 @@
-"""Schema cho phần Cài đặt (đọc/ghi cấu hình runtime + dọn cache)."""
-from pydantic import BaseModel
+"""Schemas for user settings, provider keys, and cleanup actions."""
+from pydantic import BaseModel, Field
 
 
 class CacheStats(BaseModel):
-    segments: int = 0          # số đoạn đã cache trong segments.db
-    jobs: int = 0              # số job trong jobs.db
-    upload_files: int = 0      # số file PDF gốc còn trong uploads/
-    output_files: int = 0      # số file PDF đã dịch còn trong outputs/
+    segments: int = 0
+    jobs: int = 0
+    upload_files: int = 0
+    output_files: int = 0
 
 
 class SettingsResponse(BaseModel):
-    """Trạng thái cấu hình hiện tại. API key luôn được che (masked)."""
     gemini_api_key_set: bool = False
     gemini_api_key_masked: str = ""
     qwen_api_key_set: bool = False
@@ -27,17 +26,13 @@ class SettingsResponse(BaseModel):
     qwen_tpm_limit: int = 0
     qwen_rpd_limit: int = 0
 
-    cache: CacheStats = CacheStats()
+    cache: CacheStats = Field(default_factory=CacheStats)
 
 
 class SettingsUpdateRequest(BaseModel):
-    """Cập nhật cấu hình. Trường None = giữ nguyên.
-
-    KHÔNG có gemini_api_key/qwen_api_key ở đây: site public, mỗi người dùng tự
-    nhập key riêng và key chỉ lưu ở trình duyệt của họ (localStorage), gửi kèm
-    mỗi request qua header X-Gemini-Key / X-Qwen-Key — không lưu trên server để
-    tránh một người ghi đè/xem key của người khác.
-    """
+    # None means keep the current value. Empty string clears that user's key.
+    gemini_api_key: str | None = None
+    qwen_api_key: str | None = None
     qwen_base_url: str | None = None
 
     gemini_rpm_limit: int | None = None

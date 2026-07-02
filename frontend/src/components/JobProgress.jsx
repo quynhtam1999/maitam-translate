@@ -18,7 +18,8 @@ export default function JobProgress({ status, onResumed }) {
     if (status?.status === "paused_quota") {
       listProviders().then((list) => {
         setProviders(list);
-        if (list.length) setNewProvider(list[0].name);
+        const firstUsable = list.find((p) => p.key_configured);
+        setNewProvider(firstUsable ? firstUsable.name : "");
       });
     }
   }, [status?.status]);
@@ -31,7 +32,10 @@ export default function JobProgress({ status, onResumed }) {
   const percent = total ? Math.round((done / total) * 100) : 0;
   const isDailyLimit = /RPD|giới hạn ngày/i.test(status.error || "");
 
+  const canResume = newProvider && providers.some((p) => p.name === newProvider && p.key_configured);
+
   const handleResume = async () => {
+    if (!canResume) return;
     await resumeJob(status.job_id, newProvider);
     if (onResumed) onResumed();
   };
@@ -62,7 +66,7 @@ export default function JobProgress({ status, onResumed }) {
               </option>
             ))}
           </select>
-          <button onClick={handleResume}>Đổi mô hình & dịch tiếp</button>
+          <button onClick={handleResume} disabled={!canResume}>Đổi mô hình & dịch tiếp</button>
         </div>
       )}
 

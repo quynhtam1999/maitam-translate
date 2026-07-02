@@ -23,10 +23,14 @@ class Translator:
         provider: BaseProvider,
         cache: SegmentCache,
         glossary: list[GlossaryEntry] | None = None,
+        quota_scope: str | None = None,
+        provider_options: dict | None = None,
     ):
         self.provider = provider
         self.cache = cache
         self.glossary = glossary or []
+        self.quota_scope = quota_scope
+        self.provider_options = provider_options or {}
 
     async def translate_one(self, text: str, target_lang: str = "vi", api_key: str | None = None) -> str:
         """Dịch một đoạn (dùng cho tab văn bản dán tay và cho từng segment)."""
@@ -37,13 +41,21 @@ class Translator:
         prepared = apply_glossary_pre(text, self.glossary)
         estimated_tokens = _estimate_total_tokens(prepared)
         await self._wait_for_quota_window(estimated_tokens)
-        result = await self.provider.translate(prepared, target_lang, self.glossary, api_key=api_key)
+        result = await self.provider.translate(
+            prepared,
+            target_lang,
+            self.glossary,
+            api_key=api_key,
+            provider_options=self.provider_options,
+        )
         # Ghi lại token thật để đếm quota cục bộ (A6b).
         input_tokens = result.input_tokens
         output_tokens = result.output_tokens
         if input_tokens + output_tokens <= 0:
             input_tokens = estimated_tokens
-        quota_tracker.record(self.provider.name, input_tokens, output_tokens)
+        quota_tracker.record(
+            self.provider.name, input_tokens, output_tokens, scope=self.quota_scope
+        )
 
         final = apply_glossary_post(result.text, self.glossary)
         self.cache.set(text, target_lang, final, provider_used=self.provider.name)
@@ -90,14 +102,20 @@ class Translator:
 
             await self._wait_for_quota_window(estimated_tokens)
             result = await self.provider.translate_batch(
-                prepared_texts, target_lang, self.glossary, api_key=api_key
+                prepared_texts,
+                target_lang,
+                self.glossary,
+                api_key=api_key,
+                provider_options=self.provider_options,
             )
 
             input_tokens = result.input_tokens
             output_tokens = result.output_tokens
             if input_tokens + output_tokens <= 0:
                 input_tokens = estimated_tokens
-            quota_tracker.record(self.provider.name, input_tokens, output_tokens)
+            quota_tracker.record(
+                self.provider.name, input_tokens, output_tokens, scope=self.quota_scope
+            )
 
             for original, translated in zip(originals, result.texts, strict=True):
                 final = apply_glossary_post(translated, self.glossary)
@@ -147,10 +165,15 @@ class Translator:
                 limits.tpm,
                 limits.rpd,
                 estimated_tokens=estimated_tokens,
+                scope=self.quota_scope,
             )
             if wait_seconds is None:
                 snapshot = quota_tracker.snapshot(
-                    self.provider.name, limits.rpm, limits.tpm, limits.rpd
+                    self.provider.name,
+                    limits.rpm,
+                    limits.tpm,
+                    limits.rpd,
+                    scope=self.quota_scope,
                 )
                 raise ProviderQuotaError(
                     "Đã hết giới hạn ngày (RPD) của model "

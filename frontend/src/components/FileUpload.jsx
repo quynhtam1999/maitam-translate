@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { listProviders } from "../api/translate.js";
-import { hasLocalKey, localKeyKindForProvider } from "../api/keys.js";
 
 function isUsable(p) {
-  const kind = localKeyKindForProvider(p.name);
-  return p.key_configured || (kind && hasLocalKey(kind));
+  return p.key_configured;
 }
 
 export default function FileUpload({ onSubmit, loading, refreshKey }) {
@@ -18,8 +16,9 @@ export default function FileUpload({ onSubmit, loading, refreshKey }) {
       .then((list) => {
         setProviders(list);
         setProvider((prev) => {
-          if (prev && list.some((p) => p.name === prev)) return prev;
-          return list.length ? list[0].name : "";
+          if (prev && list.some((p) => p.name === prev && isUsable(p))) return prev;
+          const firstUsable = list.find(isUsable);
+          return firstUsable ? firstUsable.name : "";
         });
       })
       .catch(() => setProviders([]));
@@ -29,6 +28,8 @@ export default function FileUpload({ onSubmit, loading, refreshKey }) {
     e.preventDefault();
     if (file && provider) onSubmit(file, provider, { forceRetranslate });
   };
+
+  const canSubmit = file && provider && providers.some((p) => p.name === provider && isUsable(p));
 
   return (
     <form onSubmit={handleSubmit} className="upload-form">
@@ -54,7 +55,7 @@ export default function FileUpload({ onSubmit, loading, refreshKey }) {
         Dịch lại từ đầu
       </label>
 
-      <button type="submit" disabled={!file || !provider || loading}>
+      <button type="submit" disabled={!canSubmit || loading}>
         {loading ? "Đang dịch..." : "Dịch PDF"}
       </button>
     </form>

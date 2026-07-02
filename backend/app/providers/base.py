@@ -48,6 +48,7 @@ class BaseProvider(ABC):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
+        provider_options: dict | None = None,
     ) -> TranslationResult:
         """Dịch một đoạn văn bản.
 
@@ -63,6 +64,7 @@ class BaseProvider(ABC):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
+        provider_options: dict | None = None,
     ) -> BatchTranslationResult:
         """Dịch nhiều đoạn trong một request để giảm RPD."""
         raise NotImplementedError

@@ -13,16 +13,18 @@ cỡ chữ cho vừa).
 
 ✅ **Đã chạy & kiểm thử end-to-end** phần khung + giao diện (Python 3.14.5 + Node.js 24.18.0):
 - Backend khởi động, `/api/health` trả `{"status":"ok"}`.
+- Có đăng ký/đăng nhập tài khoản. Các API làm việc chính yêu cầu session cookie `HttpOnly`.
 - `/api/providers` trả đúng danh sách **Qwen3 235B / Gemini / Gemma** cùng trạng thái key
-  và ghi chú hạn mức miễn phí.
+  theo tài khoản đang đăng nhập và ghi chú hạn mức miễn phí.
 - Tạo job dịch PDF qua `/api/pdf/jobs` thành công, job chuyển trạng thái đúng luồng
   (`queued` → `running` → `done` / `paused_quota` / `failed`).
 - **Giao diện dark premium** (nền đen + gradient tím theo tông logo), có **bảng ⚙ Cài đặt**
-  đầy đủ: nhập/xóa API key, Qwen Base URL, chỉnh giới hạn quota riêng cho Qwen / Gemini / Gemma, xem thống kê
-  cache và nút **xóa cache bản dịch / xóa lịch sử job & file**. Đã xác minh trên trình duyệt:
-  mở modal → lưu cài đặt → ghi vào `.env` → danh sách mô hình tự cập nhật trạng thái key.
+  đầy đủ: nhập/xóa API key theo tài khoản, Qwen Base URL theo tài khoản, chỉnh giới hạn quota cho Qwen / Gemini / Gemma,
+  xem thống kê cache/job riêng của user và nút **xóa cache bản dịch / xóa lịch sử job & file**.
 
-🔑 **API key đã được cấu hình** (Gemini + Qwen/ModelScope) trong `backend/.env`.
+🔑 **API key được lưu riêng theo từng tài khoản** trong SQLite (`backend/storage/cache/auth.db`),
+được mã hóa at-rest bằng secret server-side (`AUTH_SECRET_KEY` hoặc `auth_secret.key`). Backend chỉ trả
+về trạng thái/masked key, không trả lại key gốc cho frontend.
 
 ✅ **Đã có logic dịch thật**:
 - `backend/app/providers/gemini.py` & `qwen.py` gọi HTTP thật tới Gemini / ModelScope và lấy
@@ -51,12 +53,12 @@ nên ngưỡng thực tế là 500/ngày (đã đặt `QWEN_RPD_LIMIT=500`).
 
 ## Kiến trúc
 
-- `frontend/` — **React + Vite**: giao diện upload PDF, theo dõi tiến trình, tải kết quả, tab dịch văn bản, **bảng Cài đặt** (API key / quota / dọn cache).
-- `backend/` — **Python + FastAPI + PyMuPDF**: nhận PDF, dịch giữ bố cục, đa provider, đọc/ghi cấu hình runtime vào `.env`.
+- `frontend/` — **React + Vite**: đăng nhập/đăng ký, giao diện upload PDF, theo dõi tiến trình, tải kết quả, tab dịch văn bản, **bảng Cài đặt** (API key theo account / quota / dọn cache).
+- `backend/` — **Python + FastAPI + PyMuPDF**: auth/session cookie, nhận PDF, dịch giữ bố cục, đa provider, đọc/ghi cấu hình runtime vào `.env`.
 
 Dịch PDF chạy theo **mẫu job bất đồng bộ**: tạo job → poll trạng thái → tải file kết quả.
-Bản dịch được **cache theo nội dung đoạn** (SQLite) nên hết quota/tắt máy vẫn **dịch tiếp**
-được (resume), kể cả khi đổi sang model khác.
+Bản dịch được **cache theo nội dung đoạn và user** (SQLite) nên hết quota/tắt máy vẫn **dịch tiếp**
+được (resume), kể cả khi đổi sang model khác, nhưng không dùng chung cache giữa các tài khoản.
 
 ## Yêu cầu
 
@@ -122,24 +124,29 @@ frontend/
     └── components/             # FileUpload, JobProgress, QuotaBadge, ResultView, TextTranslate, SettingsModal
 ```
 
-Router `settings` (backend) + `SettingsModal` (frontend) là phần mới: đọc/ghi API key, Qwen
-Base URL, giới hạn quota vào `.env`, và dọn cache/job. Ở gốc còn `start.bat`
+Router `auth` xử lý đăng ký/đăng nhập/đăng xuất/session. Router `settings` (backend) +
+`SettingsModal` (frontend) đọc/ghi API key mã hóa theo tài khoản, Qwen Base URL theo tài khoản,
+giới hạn quota vào `.env`, và dọn cache/job của user hiện tại. Ở gốc còn `start.bat`
 để khởi động nhanh cả hai server.
 
 ## API chính
 
 | Method | Đường dẫn | Mô tả |
 |---|---|---|
+| POST | `/api/auth/register` | Tạo tài khoản và set session cookie |
+| POST | `/api/auth/login` | Đăng nhập và set session cookie |
+| POST | `/api/auth/logout` | Đăng xuất, xóa session |
+| GET | `/api/auth/me` | Xem user hiện tại |
 | POST | `/api/pdf/jobs` | Tạo job dịch PDF (upload file + chọn provider) |
 | GET | `/api/pdf/jobs/{id}` | Trạng thái + tiến trình job |
 | POST | `/api/pdf/jobs/{id}/resume` | Dịch tiếp (đổi provider) khi hết quota |
 | GET | `/api/pdf/jobs/{id}/download` | Tải PDF đã dịch |
 | POST | `/api/text/translate` | Dịch văn bản dán tay |
-| GET | `/api/providers` | Danh sách mô hình + trạng thái key |
-| GET/POST | `/api/glossary` | Xem / tải lên từ điển thuật ngữ (CSV) |
-| GET/PUT | `/api/settings` | Xem / cập nhật cấu hình (API key, base URL, quota) — ghi vào `.env` |
-| POST | `/api/settings/cache/clear` | Xóa toàn bộ cache bản dịch (segments.db) |
-| POST | `/api/settings/jobs/clear` | Xóa lịch sử job + file PDF gốc/đã dịch |
+| GET | `/api/providers` | Danh sách mô hình + trạng thái key của user hiện tại |
+| GET/POST | `/api/glossary` | Xem / tải lên từ điển thuật ngữ (CSV) theo user |
+| GET/PUT | `/api/settings` | Xem / cập nhật API key và Qwen Base URL theo user; quota ghi vào `.env` |
+| POST | `/api/settings/cache/clear` | Xóa cache bản dịch của user hiện tại |
+| POST | `/api/settings/jobs/clear` | Xóa lịch sử job + file PDF của user hiện tại |
 
 ## Việc cần làm tiếp (TODO)
 

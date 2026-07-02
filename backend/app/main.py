@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .core import job_store
+from .core import auth_store, job_store
 from .core.config import get_settings
-from .routers import glossary, pdf, providers, settings as settings_router, text
+from .routers import auth, glossary, pdf, providers, settings as settings_router, text
 
 
 @asynccontextmanager
@@ -14,6 +14,11 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_dirs()
     job_store.init(settings.cache_dir / "jobs.db")
+    auth_store.init(
+        settings.cache_dir / "auth.db",
+        settings.cache_dir / "auth_secret.key",
+        settings.auth_secret_key,
+    )
     yield
 
 
@@ -39,3 +44,4 @@ app.include_router(text.router)
 app.include_router(providers.router)
 app.include_router(glossary.router)
 app.include_router(settings_router.router)
+app.include_router(auth.router)

@@ -48,6 +48,7 @@ class GeminiProvider(BaseProvider):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
+        provider_options: dict | None = None,
     ) -> TranslationResult:
         api_key = api_key or get_settings().gemini_api_key
         if not api_key:
@@ -96,6 +97,7 @@ class GeminiProvider(BaseProvider):
         target_lang: str = "vi",
         glossary_hints: list[GlossaryEntry] | None = None,
         api_key: str | None = None,
+        provider_options: dict | None = None,
     ) -> BatchTranslationResult:
         if not texts:
             return BatchTranslationResult(texts=[])

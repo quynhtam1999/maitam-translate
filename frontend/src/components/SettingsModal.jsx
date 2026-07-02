@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  clearJobs,
+  clearTranslationCache,
   getSettings,
   updateSettings,
-  clearTranslationCache,
-  clearJobs,
 } from "../api/translate.js";
-import { getLocalKey, setLocalKey } from "../api/keys.js";
 
 const EMPTY = {
   qwen_base_url: "",
@@ -21,9 +20,8 @@ const EMPTY = {
 };
 
 export default function SettingsModal({ open, onClose, onSaved }) {
-  const [info, setInfo] = useState(null); // dữ liệu gốc từ server (không có key)
+  const [info, setInfo] = useState(null);
   const [form, setForm] = useState(EMPTY);
-  // Key CHỈ lưu ở trình duyệt của người dùng (localStorage) — không gửi lên server để lưu.
   const [geminiKey, setGeminiKey] = useState("");
   const [qwenKey, setQwenKey] = useState("");
   const [showKeys, setShowKeys] = useState(false);
@@ -36,8 +34,8 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     if (!open) return;
     setError(null);
     setToast(null);
-    setGeminiKey(getLocalKey("gemini"));
-    setQwenKey(getLocalKey("qwen"));
+    setGeminiKey("");
+    setQwenKey("");
     setLoading(true);
     getSettings()
       .then((s) => {
@@ -74,12 +72,14 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     setSaving(true);
     setError(null);
     try {
-      // Key: chỉ lưu ở trình duyệt này (localStorage), không gửi lên server.
-      setLocalKey("gemini", geminiKey.trim());
-      setLocalKey("qwen", qwenKey.trim());
-      const s = await updateSettings(form);
+      const patch = { ...form };
+      if (geminiKey.trim()) patch.gemini_api_key = geminiKey.trim();
+      if (qwenKey.trim()) patch.qwen_api_key = qwenKey.trim();
+      const s = await updateSettings(patch);
       setInfo(s);
-      flash("✓ Đã lưu cài đặt");
+      setGeminiKey("");
+      setQwenKey("");
+      flash("Đã lưu cài đặt");
       onSaved && onSaved();
     } catch (e) {
       setError(e.message);
@@ -88,23 +88,34 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     }
   };
 
-  const handleClearKey = (which) => () => {
-    if (!window.confirm("Xóa API key này khỏi trình duyệt?")) return;
-    setLocalKey(which, "");
-    if (which === "gemini") setGeminiKey("");
-    else setQwenKey("");
-    flash("✓ Đã xóa key");
-    onSaved && onSaved();
+  const handleClearKey = (which) => async () => {
+    if (!window.confirm("Xóa API key này khỏi tài khoản?")) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const patch = which === "gemini" ? { gemini_api_key: "" } : { qwen_api_key: "" };
+      const s = await updateSettings(patch);
+      setInfo(s);
+      if (which === "gemini") setGeminiKey("");
+      else setQwenKey("");
+      flash("Đã xóa key");
+      onSaved && onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleClearCache = async () => {
-    if (!window.confirm("Xóa toàn bộ bộ nhớ đệm bản dịch? Lần dịch sau sẽ gọi API lại từ đầu.")) return;
+    if (!window.confirm("Xóa cache bản dịch của tài khoản này?")) return;
     setSaving(true);
+    setError(null);
     try {
       const r = await clearTranslationCache();
       const s = await getSettings();
       setInfo(s);
-      flash(`✓ ${r.message}`);
+      flash(r.message);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -113,13 +124,14 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   };
 
   const handleClearJobs = async () => {
-    if (!window.confirm("Xóa lịch sử job và các file PDF gốc/đã dịch trên máy chủ?")) return;
+    if (!window.confirm("Xóa lịch sử job và file PDF của tài khoản này?")) return;
     setSaving(true);
+    setError(null);
     try {
       const r = await clearJobs();
       const s = await getSettings();
       setInfo(s);
-      flash(`✓ ${r.message}`);
+      flash(r.message);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -128,30 +140,32 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   };
 
   const cache = info?.cache || {};
+  const geminiStatus = info?.gemini_api_key_set
+    ? `Đã lưu ${info.gemini_api_key_masked}`
+    : "Chưa lưu key";
+  const qwenStatus = info?.qwen_api_key_set
+    ? `Đã lưu ${info.qwen_api_key_masked}`
+    : "Chưa lưu key";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-header">
-          <h2>⚙ Cài đặt</h2>
+          <h2>Cài đặt</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Đóng">
-            ✕
+            ×
           </button>
         </header>
 
         {loading ? (
-          <p className="muted">Đang tải cài đặt…</p>
+          <p className="muted modal-loading">Đang tải cài đặt...</p>
         ) : (
           <div className="modal-body">
-            {/* --- API keys (chỉ lưu trên trình duyệt này, KHÔNG gửi lên server) --- */}
             <section className="settings-section">
               <h3>API Key</h3>
               <p className="note">
-                Key chỉ lưu trên trình duyệt của bạn (localStorage), không gửi lên server để lưu —
-                mỗi người dùng tự chịu quota key của mình.
-                {info?.gemini_api_key_set || info?.qwen_api_key_set ? (
-                  <> Trang này cũng có key mặc định do quản trị viên cấu hình, dùng khi bạn để trống.</>
-                ) : null}
+                API key được lưu mã hóa trong tài khoản. Backend chỉ trả về trạng thái đã lưu
+                và dạng che ký tự, không trả lại key gốc.
               </p>
 
               <label className="field">
@@ -159,17 +173,18 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
-                    placeholder="Dán API key của bạn vào đây"
+                    placeholder={info?.gemini_api_key_set ? "Nhập key mới để thay thế" : "Dán API key"}
                     value={geminiKey}
                     onChange={(e) => setGeminiKey(e.target.value)}
                     autoComplete="off"
                   />
-                  {geminiKey && (
+                  {info?.gemini_api_key_set && (
                     <button type="button" className="btn-ghost sm" onClick={handleClearKey("gemini")}>
                       Xóa
                     </button>
                   )}
                 </div>
+                <span className="key-status">{geminiStatus}</span>
               </label>
 
               <label className="field">
@@ -177,23 +192,19 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
-                    placeholder="Dán API key của bạn vào đây"
+                    placeholder={info?.qwen_api_key_set ? "Nhập key mới để thay thế" : "Dán API key"}
                     value={qwenKey}
                     onChange={(e) => setQwenKey(e.target.value)}
                     autoComplete="off"
                   />
-                  {qwenKey && (
+                  {info?.qwen_api_key_set && (
                     <button type="button" className="btn-ghost sm" onClick={handleClearKey("qwen")}>
                       Xóa
                     </button>
                   )}
                 </div>
+                <span className="key-status">{qwenStatus}</span>
               </label>
-
-              <p className="note">
-                <strong>Qwen3-235B-A22B-Instruct-2507</strong> qua ModelScope — miễn phí
-                <strong> 2.000 lượt gọi/ngày</strong> (chung mọi model)
-              </p>
 
               <label className="checkbox">
                 <input
@@ -201,7 +212,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                   checked={showKeys}
                   onChange={(e) => setShowKeys(e.target.checked)}
                 />
-                Hiện API key
+                Hiện key đang nhập
               </label>
 
               <label className="field">
@@ -213,10 +224,8 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                   placeholder="https://api-inference.modelscope.ai/v1"
                 />
               </label>
-
             </section>
 
-            {/* --- Giới hạn quota --- */}
             <section className="settings-section">
               <h3>Giới hạn quota</h3>
               <div className="quota-grid">
@@ -240,25 +249,21 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <input type="number" min="0" value={form.qwen_tpm_limit} onChange={setNumField("qwen_tpm_limit")} />
                 <input type="number" min="0" value={form.qwen_rpd_limit} onChange={setNumField("qwen_rpd_limit")} />
               </div>
-              <p className="muted sm">
-                RPM/TPM: đạt giới hạn trong 1 phút thì tự chờ sang phút kế tiếp; RPD: đạt giới hạn ngày thì ngưng dịch và báo cho người dùng.
-              </p>
             </section>
 
-            {/* --- Bộ nhớ đệm / dọn dẹp --- */}
             <section className="settings-section">
-              <h3>Bộ nhớ đệm & dọn dẹp</h3>
+              <h3>Dữ liệu tài khoản</h3>
               <div className="cache-stats">
-                <span>📦 {cache.segments ?? 0} đoạn dịch đã cache</span>
-                <span>🗂 {cache.jobs ?? 0} job</span>
-                <span>📄 {cache.upload_files ?? 0} PDF gốc · {cache.output_files ?? 0} PDF đã dịch</span>
+                <span>{cache.segments ?? 0} đoạn dịch đã cache</span>
+                <span>{cache.jobs ?? 0} job</span>
+                <span>{cache.upload_files ?? 0} PDF gốc / {cache.output_files ?? 0} PDF đã dịch</span>
               </div>
               <div className="cache-actions">
                 <button type="button" className="btn-danger-ghost" onClick={handleClearCache} disabled={saving}>
-                  🧹 Xóa cache bản dịch
+                  Xóa cache bản dịch
                 </button>
                 <button type="button" className="btn-danger-ghost" onClick={handleClearJobs} disabled={saving}>
-                  🗑 Xóa lịch sử job & file
+                  Xóa lịch sử job và file
                 </button>
               </div>
             </section>
@@ -273,7 +278,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
             Đóng
           </button>
           <button className="btn-primary" onClick={handleSave} disabled={loading || saving}>
-            {saving ? "Đang lưu…" : "Lưu cài đặt"}
+            {saving ? "Đang lưu..." : "Lưu cài đặt"}
           </button>
         </footer>
       </div>
