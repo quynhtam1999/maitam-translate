@@ -152,7 +152,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
     : "Chưa lưu key";
   const qwenStatus = info?.qwen_api_key_set
     ? `Đã lưu ${info.qwen_api_key_masked}`
-    : "Chưa lưu key";
+    : "Chưa lưu key (sẽ dùng EMPTY)";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -195,11 +195,11 @@ export default function SettingsModal({ open, onClose, onSaved }) {
               </label>
 
               <label className="field">
-                <span>Qwen (ModelScope)</span>
+                <span>Qwen endpoint</span>
                 <div className="field-row">
                   <input
                     type={showKeys ? "text" : "password"}
-                    placeholder={info?.qwen_api_key_set ? "Nhập key mới để thay thế" : "Dán API key"}
+                    placeholder={info?.qwen_api_key_set ? "Nhập key mới để thay thế" : "Tùy chọn; trống = EMPTY"}
                     value={qwenKey}
                     onChange={(e) => setQwenKey(e.target.value)}
                     autoComplete="off"
@@ -228,8 +228,11 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                   type="text"
                   value={form.qwen_base_url}
                   onChange={setField("qwen_base_url")}
-                  placeholder="https://api-inference.modelscope.ai/v1"
+                  placeholder="http://localhost:8001/v1"
                 />
+                <span className="key-status">
+                  Dùng endpoint /v1 của vLLM/SGLang; không dùng api-inference.modelscope.ai/v1.
+                </span>
               </label>
             </section>
 

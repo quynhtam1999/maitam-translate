@@ -5,6 +5,11 @@ function isUsable(p) {
   return p.key_configured;
 }
 
+function unavailableLabel(p) {
+  if (isUsable(p)) return "";
+  return p.requires_key ? "(chưa có key)" : "(Base URL chưa hợp lệ)";
+}
+
 export default function FileUpload({ onSubmit, loading, refreshKey }) {
   const [file, setFile] = useState(null);
   const [provider, setProvider] = useState("");
@@ -40,7 +45,7 @@ export default function FileUpload({ onSubmit, loading, refreshKey }) {
         <select value={provider} onChange={(e) => setProvider(e.target.value)}>
           {providers.map((p) => (
             <option key={p.name} value={p.name} disabled={!isUsable(p)}>
-              {p.display_name} {isUsable(p) ? "" : "(chưa có key)"}
+              {p.display_name} {unavailableLabel(p)}
             </option>
           ))}
         </select>

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Providers
     gemini_api_key: str = ""
     qwen_api_key: str = ""
-    qwen_base_url: str = "https://api-inference.modelscope.ai/v1"
+    qwen_base_url: str = ""
 
     # App
     backend_cors_origins: str = "http://localhost:5173"
@@ -43,8 +43,7 @@ class Settings(BaseSettings):
     gemma_max_tokens_per_request: int = 8_192
     qwen_rpm_limit: int = 60
     qwen_tpm_limit: int = 100_000
-    # ModelScope free: 2000 lượt/ngày CHUNG mọi model, nhưng tối đa 500 lượt/model/ngày
-    # -> với 1 model dịch, ngưỡng thực tế là 500.
+    # Local limiter for the configured OpenAI-compatible Qwen endpoint.
     qwen_rpd_limit: int = 500
     qwen_max_tokens_per_request: int = 16_384
 

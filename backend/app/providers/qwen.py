@@ -1,5 +1,6 @@
-"""Provider Qwen qua ModelScope (endpoint OpenAI-compatible)."""
+"""Provider Qwen qua endpoint OpenAI-compatible tự triển khai."""
 import json
+from urllib.parse import urlparse
 
 import httpx
 
@@ -15,16 +16,25 @@ from .base import (
 )
 from .prompt import build_batch_system_prompt, build_system_prompt
 
+_DEFAULT_API_KEY = "EMPTY"
+_UNSUPPORTED_MODELSCOPE_HOSTED_API_BASE = "https://api-inference.modelscope.ai/v1"
+_SELF_HOSTED_HELP = (
+    "Model Qwen3-235B-A22B-Instruct-2507 trên ModelScope không bật hosted API "
+    "inference. Hãy chạy vLLM/SGLang theo model card rồi nhập Qwen Base URL "
+    "OpenAI-compatible, ví dụ http://localhost:8001/v1. API key có thể để trống "
+    "để dùng EMPTY."
+)
+
 
 class QwenProvider(BaseProvider):
     name = "qwen"
-    display_name = "Qwen3 235B (ModelScope)"
+    display_name = "Qwen3 235B (OpenAI-compatible)"
 
     def __init__(self, model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"):
         self.model = model
 
     def is_configured(self) -> bool:
-        return bool(get_settings().qwen_api_key)
+        return is_supported_qwen_base_url(get_settings().qwen_base_url)
 
     def get_limits(self) -> RateLimits:
         s = get_settings()
@@ -43,13 +53,8 @@ class QwenProvider(BaseProvider):
         api_key: str | None = None,
         provider_options: dict | None = None,
     ) -> TranslationResult:
-        settings = get_settings()
-        key = api_key or settings.qwen_api_key
-        if not key:
-            raise RuntimeError("Chưa có API key cho Qwen — nhập trong ⚙ Cài đặt")
-
         system_prompt = build_system_prompt(target_lang, glossary_hints)
-        base_url = (provider_options or {}).get("qwen_base_url") or settings.qwen_base_url
+        base_url, key = _resolve_connection(api_key, provider_options)
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {key}",
@@ -73,7 +78,7 @@ class QwenProvider(BaseProvider):
 
         if resp.status_code == 429:
             raise ProviderQuotaError(
-                f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}"
+                f"Qwen endpoint hết quota / vượt giới hạn tốc độ: {resp.text}"
             )
         if resp.status_code >= 400:
             data = _safe_json(resp)
@@ -107,14 +112,9 @@ class QwenProvider(BaseProvider):
         if not texts:
             return BatchTranslationResult(texts=[])
 
-        settings = get_settings()
-        key = api_key or settings.qwen_api_key
-        if not key:
-            raise RuntimeError("Chưa có API key cho Qwen — nhập trong ⚙ Cài đặt")
-
         system_prompt = build_batch_system_prompt(target_lang, glossary_hints)
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
-        base_url = (provider_options or {}).get("qwen_base_url") or settings.qwen_base_url
+        base_url, key = _resolve_connection(api_key, provider_options)
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {key}",
@@ -138,7 +138,7 @@ class QwenProvider(BaseProvider):
 
         if resp.status_code == 429:
             raise ProviderQuotaError(
-                f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}"
+                f"Qwen endpoint hết quota / vượt giới hạn tốc độ: {resp.text}"
             )
         if resp.status_code >= 400:
             data = _safe_json(resp)
@@ -162,6 +162,42 @@ class QwenProvider(BaseProvider):
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
         )
+
+
+def resolve_qwen_base_url(provider_options: dict | None = None) -> str:
+    settings = get_settings()
+    return ((provider_options or {}).get("qwen_base_url") or settings.qwen_base_url).strip()
+
+
+def is_supported_qwen_base_url(base_url: str) -> bool:
+    base_url = base_url.strip()
+    return bool(base_url) and not is_unsupported_modelscope_hosted_api(base_url)
+
+
+def is_unsupported_modelscope_hosted_api(base_url: str) -> bool:
+    parsed = urlparse(base_url.strip())
+    normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/").lower()
+    return normalized == _UNSUPPORTED_MODELSCOPE_HOSTED_API_BASE
+
+
+def validate_qwen_base_url(base_url: str) -> None:
+    if not base_url.strip():
+        raise RuntimeError(
+            "Chưa có Qwen Base URL. Hãy nhập endpoint OpenAI-compatible của "
+            "server vLLM/SGLang đang chạy model Qwen3-235B-A22B-Instruct-2507."
+        )
+    if is_unsupported_modelscope_hosted_api(base_url):
+        raise RuntimeError(_SELF_HOSTED_HELP)
+
+
+def _resolve_connection(
+    api_key: str | None, provider_options: dict | None = None
+) -> tuple[str, str]:
+    settings = get_settings()
+    base_url = resolve_qwen_base_url(provider_options)
+    validate_qwen_base_url(base_url)
+    key = (api_key or settings.qwen_api_key or _DEFAULT_API_KEY).strip()
+    return base_url, key or _DEFAULT_API_KEY
 
 
 def _error_message(data: dict) -> str:

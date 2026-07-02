@@ -15,10 +15,29 @@ from ..models.job import (
     JobStatusResponse,
 )
 from ..providers.quota_tracker import quota_tracker
+from ..providers.qwen import resolve_qwen_base_url, validate_qwen_base_url
 from ..providers.registry import get_provider
 from ..services.job_runner import run_pdf_job
 
 router = APIRouter(prefix="/api/pdf", tags=["pdf"])
+
+
+def _provider_credentials(user_id: str, provider: str) -> tuple[str | None, dict[str, str]]:
+    api_key = auth_store.get_provider_api_key(user_id, provider)
+    provider_options = auth_store.get_provider_options(user_id, provider)
+    if provider == "qwen":
+        try:
+            validate_qwen_base_url(resolve_qwen_base_url(provider_options))
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return api_key, provider_options
+
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Chưa lưu API key cho provider này trong tài khoản.",
+        )
+    return api_key, provider_options
 
 
 def _quota_for(provider_name: str | None, user_id: str):
@@ -61,13 +80,7 @@ async def create_pdf_job(
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Provider không hợp lệ: {provider}")
 
-    api_key = auth_store.get_provider_api_key(current_user["id"], provider)
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Chưa lưu API key cho provider này trong tài khoản.",
-        )
-    provider_options = auth_store.get_provider_options(current_user["id"], provider)
+    api_key, provider_options = _provider_credentials(current_user["id"], provider)
     settings = get_settings()
     job_id = job_store.create_job(
         current_user["id"],
@@ -128,13 +141,7 @@ async def resume_pdf_job(
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Provider không hợp lệ: {provider}")
 
-    api_key = auth_store.get_provider_api_key(current_user["id"], provider)
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Chưa lưu API key cho provider này trong tài khoản.",
-        )
-    provider_options = auth_store.get_provider_options(current_user["id"], provider)
+    api_key, provider_options = _provider_credentials(current_user["id"], provider)
     job_store.update_job(job_id, status=JobStatus.QUEUED, provider=provider, error=None)
     background_tasks.add_task(
         run_pdf_job,

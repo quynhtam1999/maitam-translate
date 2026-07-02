@@ -6,6 +6,11 @@ function isUsable(p) {
   return p.key_configured;
 }
 
+function unavailableLabel(p) {
+  if (isUsable(p)) return "";
+  return p.requires_key ? "(chưa có key)" : "(Base URL chưa hợp lệ)";
+}
+
 export default function TextTranslate({ refreshKey }) {
   const [providers, setProviders] = useState([]);
   const [provider, setProvider] = useState("");
@@ -46,7 +51,7 @@ export default function TextTranslate({ refreshKey }) {
         <select value={provider} onChange={(e) => setProvider(e.target.value)}>
           {providers.map((p) => (
             <option key={p.name} value={p.name} disabled={!isUsable(p)}>
-              {p.display_name} {isUsable(p) ? "" : "(chưa có key)"}
+              {p.display_name} {unavailableLabel(p)}
             </option>
           ))}
         </select>

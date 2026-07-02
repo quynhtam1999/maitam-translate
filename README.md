@@ -3,7 +3,7 @@
 Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **tiếng Việt**,
 **giữ nguyên bố cục trang gốc** (ảnh, bảng, chia cột — chỉ thay chữ tại chỗ), và dịch
 **văn bản dán tay**. Engine dịch đa nhà cung cấp: **Gemini/Gemma 4 31B** (Google AI Studio) và
-**Qwen** (ModelScope, OpenAI-compatible).
+**Qwen3 235B** qua endpoint OpenAI-compatible tự triển khai (vLLM/SGLang).
 
 Đây là bản web của phần mềm desktop cùng tên (Python/Tkinter, đóng gói .exe). Kỹ thuật
 giữ bố cục dùng **overlay PyMuPDF** (xóa chữ gốc tại chỗ + chèn bản dịch đè lên, tự co
@@ -15,8 +15,8 @@ cỡ chữ cho vừa).
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
   có cache theo user để tiếp tục dịch khi hết quota, đổi model hoặc tắt/mở lại app.
 - Dịch văn bản dán tay bằng 1 request cho mỗi lần gửi, giúp RPD không thể thấp hơn nữa ở luồng văn bản.
-- Provider thật: Gemini, Gemma 4 31B qua Google AI Studio và Qwen3 235B qua ModelScope
-  (OpenAI-compatible). Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
+- Provider thật: Gemini, Gemma 4 31B qua Google AI Studio và Qwen3 235B qua endpoint
+  OpenAI-compatible tự triển khai. Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
 - PDF overlay bằng PyMuPDF: bóc chữ, xóa chữ gốc tại chỗ, chèn bản dịch, hỗ trợ tài liệu 2 cột,
   giữ ảnh/biểu đồ và tách bảng vector theo cell/dòng để hạn chế vỡ bố cục.
 - Ảnh/biểu đồ chưa OCR nên không dịch chữ nằm trong ảnh; caption và chữ thật ngoài vùng ảnh vẫn được dịch.
@@ -55,10 +55,11 @@ cỡ chữ cho vừa).
   cần xác nhận job về `done`, PDF tải được, bố cục giữ ổn và `rpd_used` giảm so với cấu hình cũ.
 
 ### Model Qwen đang dùng
-`Qwen/Qwen3-235B-A22B-Instruct-2507` qua ModelScope (endpoint OpenAI-compatible).
-Hạn mức miễn phí: **2.000 lượt gọi/ngày** (chung mọi model), tối đa **500 lượt/model/ngày**;
-reset lúc 00:00 giờ Bắc Kinh (UTC+8), vượt hạn mức trả HTTP 429. Vì chỉ dùng 1 model để dịch
-nên ngưỡng thực tế là 500/ngày (đã đặt `QWEN_RPD_LIMIT=500`).
+`Qwen/Qwen3-235B-A22B-Instruct-2507` từ ModelScope. Model card hiện báo không bật hosted
+API inference (`SupportApiInference=false`), nên app không gọi mặc định vào
+`https://api-inference.modelscope.ai/v1` nữa. Hãy chạy model bằng vLLM/SGLang để tạo endpoint
+OpenAI-compatible rồi nhập `QWEN_BASE_URL` / Qwen Base URL, ví dụ `http://localhost:8001/v1`.
+Nếu endpoint không yêu cầu khóa, có thể để trống API key; backend sẽ gửi `EMPTY` theo mẫu Qwen-Agent.
 
 ### Cách xử lý quota
 
