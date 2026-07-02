@@ -7,7 +7,7 @@ from .qwen import QwenProvider
 _PROVIDERS: dict[str, BaseProvider] = {
     "qwen": QwenProvider(),
     "gemini": GeminiProvider(model="gemini-3.1-flash-lite", display_name="Gemini 3.1 Flash Lite"),
-    "gemma": GeminiProvider(model="gemma-4-31b", display_name="Gemma 4 31B", name="gemma"),
+    "gemma": GeminiProvider(model="gemma-4-31b-it", display_name="Gemma 4 31B", name="gemma"),
 }
 
 _FREE_TIER_NOTE = {

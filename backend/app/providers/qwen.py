@@ -51,7 +51,11 @@ class QwenProvider(BaseProvider):
         system_prompt = build_system_prompt(target_lang, glossary_hints)
         base_url = (provider_options or {}).get("qwen_base_url") or settings.qwen_base_url
         url = f"{base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {key}"}
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
         body = {
             "model": self.model,
             "messages": [
@@ -68,23 +72,28 @@ class QwenProvider(BaseProvider):
             resp = await client.post(url, headers=headers, json=body)
 
         if resp.status_code == 429:
-            raise ProviderQuotaError(f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}")
+            raise ProviderQuotaError(
+                f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}"
+            )
         if resp.status_code >= 400:
             data = _safe_json(resp)
-            message = (data.get("error") or {}).get("message", resp.text) if data else resp.text
+            message = _error_message(data) if data else resp.text
             raise RuntimeError(f"Qwen API lỗi ({resp.status_code}): {message}")
 
         data = resp.json()
-        choices = data.get("choices") or []
-        if not choices:
-            raise RuntimeError("Qwen không trả về kết quả")
+        provider_error = _provider_error_message(data)
+        if provider_error:
+            raise RuntimeError(f"Qwen API lỗi: {provider_error}")
 
-        translated = (choices[0].get("message") or {}).get("content", "").strip()
-        usage = data.get("usage", {})
+        translated = _extract_response_text(data)
+        if not translated:
+            raise RuntimeError(f"Qwen không trả về kết quả hợp lệ (keys={_top_level_keys(data)})")
+
+        usage = _extract_usage(data)
         return TranslationResult(
             text=translated,
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
         )
 
     async def translate_batch(
@@ -107,7 +116,11 @@ class QwenProvider(BaseProvider):
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
         base_url = (provider_options or {}).get("qwen_base_url") or settings.qwen_base_url
         url = f"{base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {key}"}
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
         body = {
             "model": self.model,
             "messages": [
@@ -124,24 +137,148 @@ class QwenProvider(BaseProvider):
             resp = await client.post(url, headers=headers, json=body)
 
         if resp.status_code == 429:
-            raise ProviderQuotaError(f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}")
+            raise ProviderQuotaError(
+                f"Qwen/ModelScope hết quota / vượt giới hạn tốc độ: {resp.text}"
+            )
         if resp.status_code >= 400:
             data = _safe_json(resp)
-            message = (data.get("error") or {}).get("message", resp.text) if data else resp.text
+            message = _error_message(data) if data else resp.text
             raise RuntimeError(f"Qwen API lỗi ({resp.status_code}): {message}")
 
         data = resp.json()
-        choices = data.get("choices") or []
-        if not choices:
-            raise RuntimeError("Qwen không trả về kết quả")
+        provider_error = _provider_error_message(data)
+        if provider_error:
+            raise RuntimeError(f"Qwen API lỗi: {provider_error}")
 
-        raw = (choices[0].get("message") or {}).get("content", "").strip()
-        usage = data.get("usage", {})
+        raw = _extract_response_text(data)
+        if not raw:
+            raise RuntimeError(
+                f"Qwen không trả về kết quả hợp lệ (keys={_top_level_keys(data)})"
+            )
+
+        usage = _extract_usage(data)
         return BatchTranslationResult(
             texts=parse_batch_translations(raw, len(texts)),
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
         )
+
+
+def _error_message(data: dict) -> str:
+    error = data.get("error") if isinstance(data, dict) else None
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("msg") or error)
+    if isinstance(error, str):
+        return error
+    return str(data.get("message") or data.get("msg") or data)
+
+
+def _provider_error_message(data: dict) -> str:
+    error = data.get("error")
+    if error:
+        return _error_message(data)
+
+    code = data.get("code")
+    if code in (None, 0, "0", 200, "200", "success", "Success", "OK", "ok"):
+        return ""
+    return str(data.get("message") or data.get("msg") or code)
+
+
+def _extract_response_text(data: dict) -> str:
+    for choice in _iter_choices(data):
+        text = _text_from_choice(choice)
+        if text:
+            return text
+
+    for container in _iter_containers(data):
+        for key in ("output_text", "generated_text", "text", "content", "response", "answer"):
+            text = _text_from_value(container.get(key))
+            if text:
+                return text
+
+    return ""
+
+
+def _iter_choices(data: dict):
+    for container in _iter_containers(data):
+        choices = container.get("choices")
+        if isinstance(choices, list):
+            yield from choices
+
+
+def _iter_containers(data: dict):
+    yield data
+    for key in ("data", "output", "result"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            yield value
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    yield item
+
+
+def _text_from_choice(choice: object) -> str:
+    if not isinstance(choice, dict):
+        return ""
+    for key in ("message", "delta"):
+        text = _text_from_value(choice.get(key))
+        if text:
+            return text
+    for key in ("text", "content", "output_text", "generated_text"):
+        text = _text_from_value(choice.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _text_from_value(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return "".join(_text_from_value(item) for item in value).strip()
+    if not isinstance(value, dict):
+        return ""
+
+    for key in ("content", "text", "output_text", "generated_text", "response", "answer"):
+        text = _text_from_value(value.get(key))
+        if text:
+            return text
+    return _text_from_value(value.get("parts"))
+
+
+def _extract_usage(data: dict) -> dict[str, int]:
+    usage = {}
+    for container in _iter_containers(data):
+        candidate = container.get("usage")
+        if isinstance(candidate, dict):
+            usage = candidate
+            break
+
+    return {
+        "input_tokens": _int_from_keys(
+            usage, ("prompt_tokens", "input_tokens", "promptTokens", "inputTokens")
+        ),
+        "output_tokens": _int_from_keys(
+            usage, ("completion_tokens", "output_tokens", "completionTokens", "outputTokens")
+        ),
+    }
+
+
+def _int_from_keys(data: dict, keys: tuple[str, ...]) -> int:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return 0
+
+
+def _top_level_keys(data: object) -> list[str]:
+    if not isinstance(data, dict):
+        return []
+    return sorted(str(key) for key in data.keys())
 
 
 def _safe_json(resp: httpx.Response) -> dict | None:

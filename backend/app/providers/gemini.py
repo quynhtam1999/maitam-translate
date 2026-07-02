@@ -1,4 +1,5 @@
 """Provider Google AI Studio (Gemini / Gemma) — gọi generativelanguage API qua httpx."""
+import asyncio
 import json
 
 import httpx
@@ -16,6 +17,8 @@ from .base import (
 from .prompt import build_batch_system_prompt, build_system_prompt
 
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+_RETRY_DELAYS_SECONDS = (1.0, 3.0, 8.0)
+_TRANSIENT_STATUS_CODES = {500, 502, 503, 504}
 
 
 class GeminiProvider(BaseProvider):
@@ -67,7 +70,7 @@ class GeminiProvider(BaseProvider):
         system_prompt = build_system_prompt(target_lang, glossary_hints)
         url = f"{_API_BASE}/{self.model}:generateContent"
         body = {
-            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": text}]}],
             "generationConfig": {"temperature": 0.2},
         }
@@ -75,27 +78,11 @@ class GeminiProvider(BaseProvider):
         if max_output_tokens > 0:
             body["generationConfig"]["maxOutputTokens"] = max_output_tokens
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, params={"key": api_key}, json=body)
-
-        if resp.status_code == 429:
-            raise ProviderQuotaError(f"Gemini hết quota / vượt giới hạn tốc độ: {resp.text}")
-        if resp.status_code >= 400:
-            data = _safe_json(resp)
-            message = (data.get("error") or {}).get("message", resp.text) if data else resp.text
-            status = (data.get("error") or {}).get("status", "") if data else ""
-            if status in ("RESOURCE_EXHAUSTED",):
-                raise ProviderQuotaError(f"Gemini hết quota: {message}")
-            raise RuntimeError(f"Gemini API lỗi ({resp.status_code}): {message}")
+        resp = await _post_generate_content(url, api_key, body, timeout=60.0)
+        _raise_for_error(resp, self.display_name)
 
         data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            block_reason = (data.get("promptFeedback") or {}).get("blockReason")
-            raise RuntimeError(f"Gemini không trả về kết quả (blockReason={block_reason})")
-
-        parts = candidates[0].get("content", {}).get("parts", [])
-        translated = "".join(p.get("text", "") for p in parts).strip()
+        translated = _extract_candidate_text(data, self.display_name)
 
         usage = data.get("usageMetadata", {})
         return TranslationResult(
@@ -123,7 +110,7 @@ class GeminiProvider(BaseProvider):
         payload = [{"id": idx, "text": text} for idx, text in enumerate(texts)]
         url = f"{_API_BASE}/{self.model}:generateContent"
         body = {
-            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
             "contents": [
                 {
                     "role": "user",
@@ -132,40 +119,101 @@ class GeminiProvider(BaseProvider):
             ],
             "generationConfig": {
                 "temperature": 0.1,
-                "response_mime_type": "application/json",
+                "responseMimeType": "application/json",
             },
         }
         max_output_tokens = self.get_limits().max_output_tokens
         if max_output_tokens > 0:
             body["generationConfig"]["maxOutputTokens"] = max_output_tokens
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, params={"key": api_key}, json=body)
-
-        if resp.status_code == 429:
-            raise ProviderQuotaError(f"Gemini hết quota / vượt giới hạn tốc độ: {resp.text}")
-        if resp.status_code >= 400:
-            data = _safe_json(resp)
-            message = (data.get("error") or {}).get("message", resp.text) if data else resp.text
-            status = (data.get("error") or {}).get("status", "") if data else ""
-            if status in ("RESOURCE_EXHAUSTED",):
-                raise ProviderQuotaError(f"Gemini hết quota: {message}")
-            raise RuntimeError(f"Gemini API lỗi ({resp.status_code}): {message}")
+        resp = await _post_generate_content(url, api_key, body, timeout=120.0)
+        _raise_for_error(resp, self.display_name)
 
         data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            block_reason = (data.get("promptFeedback") or {}).get("blockReason")
-            raise RuntimeError(f"Gemini không trả về kết quả (blockReason={block_reason})")
-
-        parts = candidates[0].get("content", {}).get("parts", [])
-        raw = "".join(p.get("text", "") for p in parts).strip()
+        raw = _extract_candidate_text(data, self.display_name)
         usage = data.get("usageMetadata", {})
         return BatchTranslationResult(
             texts=parse_batch_translations(raw, len(texts)),
             input_tokens=usage.get("promptTokenCount", 0),
             output_tokens=usage.get("candidatesTokenCount", 0),
         )
+
+
+async def _post_generate_content(
+    url: str, api_key: str, body: dict, timeout: float
+) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(len(_RETRY_DELAYS_SECONDS) + 1):
+            try:
+                resp = await client.post(url, params={"key": api_key}, json=body)
+            except httpx.TransportError as exc:
+                if attempt >= len(_RETRY_DELAYS_SECONDS):
+                    raise RuntimeError(
+                        f"Không kết nối được Google AI Studio API sau {attempt + 1} lần thử: {exc}"
+                    ) from exc
+                await asyncio.sleep(_RETRY_DELAYS_SECONDS[attempt])
+                continue
+
+            if (
+                resp.status_code not in _TRANSIENT_STATUS_CODES
+                or attempt >= len(_RETRY_DELAYS_SECONDS)
+            ):
+                return resp
+
+            await asyncio.sleep(_retry_delay_seconds(resp, attempt))
+
+    raise RuntimeError("Không nhận được phản hồi từ Google AI Studio API")
+
+
+def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
+    retry_after = resp.headers.get("retry-after")
+    if retry_after:
+        try:
+            return max(float(retry_after), 0.0)
+        except ValueError:
+            pass
+    return _RETRY_DELAYS_SECONDS[attempt]
+
+
+def _raise_for_error(resp: httpx.Response, provider_label: str) -> None:
+    if resp.status_code == 429:
+        raise ProviderQuotaError(
+            f"{provider_label} hết quota / vượt giới hạn tốc độ: {resp.text}"
+        )
+    if resp.status_code < 400:
+        return
+
+    data = _safe_json(resp)
+    error = data.get("error") if isinstance(data, dict) else None
+    message = error.get("message", resp.text) if isinstance(error, dict) else resp.text
+    status = error.get("status", "") if isinstance(error, dict) else ""
+    if status == "RESOURCE_EXHAUSTED":
+        raise ProviderQuotaError(f"{provider_label} hết quota: {message}")
+    if resp.status_code in _TRANSIENT_STATUS_CODES:
+        raise RuntimeError(
+            f"{provider_label} API tạm quá tải ({resp.status_code}) sau "
+            f"{len(_RETRY_DELAYS_SECONDS) + 1} lần thử: {message}"
+        )
+    raise RuntimeError(f"{provider_label} API lỗi ({resp.status_code}): {message}")
+
+
+def _extract_candidate_text(data: dict, provider_label: str) -> str:
+    candidates = data.get("candidates") or []
+    if not candidates:
+        block_reason = (data.get("promptFeedback") or {}).get("blockReason")
+        raise RuntimeError(
+            f"{provider_label} không trả về kết quả (blockReason={block_reason})"
+        )
+
+    candidate = candidates[0]
+    parts = candidate.get("content", {}).get("parts", [])
+    text = "".join(str(p.get("text", "")) for p in parts if isinstance(p, dict)).strip()
+    if not text:
+        finish_reason = candidate.get("finishReason")
+        raise RuntimeError(
+            f"{provider_label} không trả về nội dung dịch (finishReason={finish_reason})"
+        )
+    return text
 
 
 def _safe_json(resp: httpx.Response) -> dict | None:
