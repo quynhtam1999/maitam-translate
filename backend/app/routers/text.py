@@ -3,14 +3,14 @@ from fastapi import APIRouter, HTTPException
 
 from ..core import auth_store
 from ..core.auth import CurrentUser
-from ..core.config import get_settings
 from ..models.translate import TextTranslateRequest, TextTranslateResponse
 from ..providers.base import ProviderQuotaError
 from ..providers.quota_tracker import quota_tracker
 from ..providers.qwen import resolve_qwen_base_url, validate_qwen_base_url
 from ..providers.registry import get_provider
+from ..services import storage
 from ..services.cache import SegmentCache
-from ..services.glossary import load_glossary
+from ..services.glossary import load_glossary_bytes
 from ..services.translator import Translator
 
 router = APIRouter(prefix="/api/text", tags=["text"])
@@ -18,7 +18,6 @@ router = APIRouter(prefix="/api/text", tags=["text"])
 
 @router.post("/translate", response_model=TextTranslateResponse)
 async def translate_text(req: TextTranslateRequest, current_user: CurrentUser):
-    settings = get_settings()
     try:
         provider = get_provider(req.provider)
     except KeyError:
@@ -41,8 +40,9 @@ async def translate_text(req: TextTranslateRequest, current_user: CurrentUser):
             status_code=400,
             detail="Chưa lưu API key cho provider này trong tài khoản.",
         )
-    cache = SegmentCache(settings.cache_dir / "segments.db", user_id=current_user["id"])
-    glossary = load_glossary(settings.glossary_dir / current_user["id"] / "glossary.csv")
+    cache = SegmentCache(user_id=current_user["id"])
+    glossary_bytes = storage.get_bytes(f"glossary/{current_user['id']}/glossary.csv")
+    glossary = load_glossary_bytes(glossary_bytes) if glossary_bytes else []
     translator = Translator(
         provider,
         cache,

@@ -3,16 +3,20 @@
 Hàm này chạy trong tác vụ nền (job_runner). Cập nhật tiến trình vào job_store để frontend
 poll được. Hết quota giữa chừng -> đặt job = paused_quota (KHÔNG failed), giữ cache đã ghi,
 cho phép resume (đổi provider rồi dịch tiếp nhờ cache).
+
+`input_key`/`output_key` là storage key (xem `services/storage.py`), không phải đường dẫn
+đĩa trực tiếp — cho phép chạy trên object storage khi deploy.
 """
+import tempfile
 from pathlib import Path
 
 from ..core import job_store
-from ..core.config import get_settings
 from ..models.job import JobProgress, JobStatus
 from ..providers.base import ProviderQuotaError
 from ..providers.registry import get_provider
+from . import storage
 from .cache import SegmentCache
-from .glossary import load_glossary
+from .glossary import load_glossary_bytes
 from .pdf_overlay import collect_segments, overlay_translate
 from .translator import Translator
 
@@ -25,17 +29,17 @@ except ImportError:
 async def translate_pdf(
     job_id: str,
     user_id: str,
-    input_path: Path,
-    output_path: Path,
+    input_key: str,
+    output_key: str,
     provider_name: str,
     target_lang: str = "vi",
     force_retranslate: bool = False,
     api_key: str | None = None,
     provider_options: dict | None = None,
 ) -> None:
-    settings = get_settings()
-    cache = SegmentCache(settings.cache_dir / "segments.db", user_id=user_id)
-    glossary = load_glossary(settings.glossary_dir / user_id / "glossary.csv")
+    cache = SegmentCache(user_id=user_id)
+    glossary_bytes = storage.get_bytes(f"glossary/{user_id}/glossary.csv")
+    glossary = load_glossary_bytes(glossary_bytes) if glossary_bytes else []
 
     try:
         job_store.update_job(job_id, status=JobStatus.RUNNING, provider=provider_name)
@@ -56,38 +60,47 @@ async def translate_pdf(
         progress = JobProgress(phase="extracting")
         job_store.update_job(job_id, progress=progress)
 
-        doc = fitz.open(str(input_path))
-        segments = collect_segments(doc)  # TODO: đã stub
+        # Toàn bộ vòng đời `doc` nằm trong `local_copy` — với S3Storage, file tạm chỉ tồn
+        # tại đến khi khối này thoát, nên phải mở/dịch/lưu xong (doc.close()) trước đó.
+        with storage.local_copy(input_key) as tmp_in:
+            doc = fitz.open(str(tmp_in))
+            segments = collect_segments(doc)  # TODO: đã stub
 
-        # Giai đoạn 2: dịch — cập nhật tiến độ theo từng batch (real-time).
-        progress.phase = "translating"
-        progress.segments_total = _count_unique_segment_texts(segments)
-        progress.pages_total = doc.page_count
-        job_store.update_job(job_id, progress=progress)
-
-        def on_progress(done: int, total: int) -> None:
+            # Giai đoạn 2: dịch — cập nhật tiến độ theo từng batch (real-time).
             progress.phase = "translating"
-            progress.segments_total = total
-            progress.segments_translated = done
+            progress.segments_total = _count_unique_segment_texts(segments)
+            progress.pages_total = doc.page_count
             job_store.update_job(job_id, progress=progress)
 
-        translations = await translator.translate_segments(
-            segments,
-            target_lang=target_lang,
-            on_progress=on_progress,
-            api_key=api_key,
-            force_retranslate=force_retranslate,
-        )
+            def on_progress(done: int, total: int) -> None:
+                progress.phase = "translating"
+                progress.segments_total = total
+                progress.segments_translated = done
+                job_store.update_job(job_id, progress=progress)
 
-        # Giai đoạn 3: chèn bản dịch vào PDF và lưu file.
-        progress.phase = "rendering"
-        progress.segments_translated = progress.segments_total
-        job_store.update_job(job_id, progress=progress)
+            translations = await translator.translate_segments(
+                segments,
+                target_lang=target_lang,
+                on_progress=on_progress,
+                api_key=api_key,
+                force_retranslate=force_retranslate,
+            )
 
-        overlay_translate(doc, segments, translations)  # TODO: đã stub
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        doc.save(str(output_path))
-        doc.close()
+            # Giai đoạn 3: chèn bản dịch vào PDF và lưu file.
+            progress.phase = "rendering"
+            progress.segments_translated = progress.segments_total
+            job_store.update_job(job_id, progress=progress)
+
+            overlay_translate(doc, segments, translations)  # TODO: đã stub
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out_file:
+                tmp_out_path = Path(tmp_out_file.name)
+            doc.save(str(tmp_out_path))
+            doc.close()
+
+        try:
+            storage.upload_file(output_key, tmp_out_path)
+        finally:
+            tmp_out_path.unlink(missing_ok=True)
 
         progress.phase = "done"
         progress.segments_translated = progress.segments_total

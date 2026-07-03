@@ -4,28 +4,34 @@
 - mode=keep: giữ nguyên không dịch (vd tên thuốc 'oxytocin,,keep').
 """
 import csv
+import io
 from pathlib import Path
 
 from ..models.glossary import GlossaryEntry
 
 
 def load_glossary(path: Path) -> list[GlossaryEntry]:
-    """Đọc glossary.csv. Trả list rỗng nếu file chưa tồn tại."""
+    """Đọc glossary.csv trên đĩa. Trả list rỗng nếu file chưa tồn tại."""
     if not path.exists():
         return []
+    return load_glossary_bytes(path.read_bytes())
+
+
+def load_glossary_bytes(data: bytes) -> list[GlossaryEntry]:
+    """Đọc glossary từ bytes CSV (dùng khi lấy dữ liệu qua object storage)."""
+    text = data.decode("utf-8-sig")
     entries: list[GlossaryEntry] = []
-    with path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            source = (row.get("source") or "").strip()
-            if not source:
-                continue
-            mode = (row.get("mode") or "translate").strip().lower()
-            if mode not in ("translate", "keep"):
-                mode = "translate"
-            entries.append(
-                GlossaryEntry(source=source, target=(row.get("target") or "").strip(), mode=mode)  # type: ignore[arg-type]
-            )
+    reader = csv.DictReader(io.StringIO(text))
+    for row in reader:
+        source = (row.get("source") or "").strip()
+        if not source:
+            continue
+        mode = (row.get("mode") or "translate").strip().lower()
+        if mode not in ("translate", "keep"):
+            mode = "translate"
+        entries.append(
+            GlossaryEntry(source=source, target=(row.get("target") or "").strip(), mode=mode)  # type: ignore[arg-type]
+        )
     return entries
 
 

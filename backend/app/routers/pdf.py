@@ -1,12 +1,12 @@
 """PDF translation job endpoints."""
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from ..core import auth_store, job_store
 from ..core.auth import CurrentUser
-from ..core.config import get_settings
 from ..models.job import (
     JobCreateResponse,
     JobProgress,
@@ -17,6 +17,7 @@ from ..models.job import (
 from ..providers.quota_tracker import quota_tracker
 from ..providers.qwen import resolve_qwen_base_url, validate_qwen_base_url
 from ..providers.registry import get_provider
+from ..services import storage
 from ..services.job_runner import run_pdf_job
 
 router = APIRouter(prefix="/api/pdf", tags=["pdf"])
@@ -69,6 +70,11 @@ def _to_status_response(job: dict) -> JobStatusResponse:
     )
 
 
+def _content_disposition(filename: str) -> str:
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "document.pdf"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
 @router.post("/jobs", response_model=JobCreateResponse, status_code=202)
 async def create_pdf_job(
     background_tasks: BackgroundTasks,
@@ -86,7 +92,6 @@ async def create_pdf_job(
         raise HTTPException(status_code=400, detail=f"Provider không hợp lệ: {provider}")
 
     api_key, provider_options = _provider_credentials(current_user["id"], provider)
-    settings = get_settings()
     job_id = job_store.create_job(
         current_user["id"],
         input_path="",
@@ -96,22 +101,18 @@ async def create_pdf_job(
         target_lang=target_lang,
     )
 
-    input_dir = settings.uploads_dir / current_user["id"]
-    output_dir = settings.outputs_dir / current_user["id"]
-    input_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    input_path = input_dir / f"{job_id}.pdf"
-    output_path = output_dir / f"{job_id}_vi.pdf"
-    input_path.write_bytes(await file.read())
+    input_key = f"uploads/{current_user['id']}/{job_id}.pdf"
+    output_key = f"outputs/{current_user['id']}/{job_id}_vi.pdf"
+    storage.put_bytes(input_key, await file.read())
 
-    job_store.set_job_paths(job_id, current_user["id"], str(input_path), str(output_path))
+    job_store.set_job_paths(job_id, current_user["id"], input_key, output_key)
 
     background_tasks.add_task(
         run_pdf_job,
         job_id,
         current_user["id"],
-        str(input_path),
-        str(output_path),
+        input_key,
+        output_key,
         provider,
         target_lang,
         force_retranslate,
@@ -171,11 +172,13 @@ async def download_pdf_job(job_id: str, current_user: CurrentUser):
     if job["status"] != JobStatus.DONE.value:
         raise HTTPException(status_code=409, detail="Job chưa hoàn tất")
 
-    output_path = Path(job["output_path"])
-    if not output_path.exists():
+    data = storage.get_bytes(job["output_path"])
+    if data is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy file kết quả")
 
     base = Path(job.get("original_name") or "document.pdf").stem
-    return FileResponse(
-        str(output_path), media_type="application/pdf", filename=f"{base}_vi.pdf"
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition(f"{base}_vi.pdf")},
     )

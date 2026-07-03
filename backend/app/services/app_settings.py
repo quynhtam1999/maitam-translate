@@ -3,8 +3,6 @@
 Per-user API keys are intentionally not written here. They are stored encrypted
 in auth_store and scoped to the authenticated account.
 """
-from pathlib import Path
-
 from ..core.config import BACKEND_ROOT, get_settings
 
 ENV_PATH = BACKEND_ROOT / ".env"
@@ -69,9 +67,3 @@ def apply_updates(fields: dict[str, object]) -> None:
     if env_updates:
         _write_env(env_updates)
         get_settings.cache_clear()
-
-
-def _count_files(directory: Path) -> int:
-    if not directory.exists():
-        return 0
-    return sum(1 for p in directory.iterdir() if p.is_file())

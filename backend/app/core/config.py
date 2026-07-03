@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     admin_username: str = ""
     admin_password: str = ""
 
+    # DB: rỗng -> SQLite cục bộ (storage/cache/app.db). Đặt để dùng Postgres (Neon) khi deploy.
+    database_url: str = ""
+
+    # Object storage (S3-compatible: Cloudflare R2 / Supabase Storage / Backblaze B2).
+    # s3_bucket rỗng -> lưu file trên đĩa cục bộ (storage/) như hiện tại.
+    s3_endpoint_url: str = ""
+    s3_bucket: str = ""
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_region: str = "auto"
+
     # Quota limits plus per-request output-token ceilings.
     gemini_rpm_limit: int = 15
     gemini_tpm_limit: int = 250_000
@@ -49,6 +60,17 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.backend_cors_origins.split(",") if o.strip()]
+
+    @property
+    def db_url(self) -> str:
+        url = self.database_url.strip()
+        if not url:
+            return f"sqlite:///{self.cache_dir / 'app.db'}"
+        if url.startswith("postgres://"):
+            url = "postgresql+psycopg://" + url[len("postgres://") :]
+        elif url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url[len("postgresql://") :]
+        return url
 
     @property
     def storage_path(self) -> Path:

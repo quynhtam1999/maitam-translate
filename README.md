@@ -30,13 +30,28 @@ cỡ chữ cho vừa).
   chưa có admin.
 - Session dùng cookie `HttpOnly`, mặc định nhớ đăng nhập 365 ngày (`AUTH_SESSION_DAYS`) và tự gia hạn
   khi còn dùng app; nút **Đăng xuất** xóa phiên ngay lập tức.
-- API key Gemini/Qwen lưu riêng theo từng tài khoản trong SQLite
-  (`backend/storage/cache/auth.db`), mã hóa at-rest bằng AES-GCM với secret server-side
-  (`AUTH_SECRET_KEY` hoặc `auth_secret.key`). Backend chỉ trả trạng thái/masked key, không trả key gốc.
+- API key Gemini/Qwen lưu riêng theo từng tài khoản trong bảng `user_api_keys`, mã hóa at-rest
+  bằng AES-GCM với secret server-side (`AUTH_SECRET_KEY` hoặc `auth_secret.key`). Backend chỉ trả
+  trạng thái/masked key, không trả key gốc.
 - **Không có key dùng chung**: `.env` không cấu hình API key Gemini/Gemma/Qwen, và tầng provider
   không fallback về key toàn cục nào — tài khoản chưa tự lưu key sẽ bị chặn (400) ngay khi gọi dịch.
 - Bảng **Cài đặt** cho phép nhập/xóa API key theo tài khoản, cấu hình Qwen theo tài khoản
   (API key ModelScope + Base URL + tên model), xem thống kê cache/job và xóa cache/job riêng của user.
+
+✅ **State ra ngoài — deploy free-tier bền vững**
+- Tầng DB dùng **SQLAlchemy Core**: cùng một code chạy **SQLite cục bộ** (`storage/cache/app.db`,
+  zero-setup, `start.bat` giữ nguyên) khi `DATABASE_URL` trống, và **Postgres (Neon)** khi đặt
+  `DATABASE_URL` — gộp 3 DB cũ (`auth.db`/`jobs.db`/`segments.db`) thành 5 bảng
+  (`users`, `user_api_keys`, `sessions`, `jobs`, `segment_cache`) trong một engine dùng chung
+  (`core/db.py`).
+- Tầng file (PDF gốc/đã dịch + glossary) qua **object storage abstraction**
+  (`services/storage.py`): `LocalStorage` ghi xuống `storage/` như cũ khi `S3_BUCKET` trống,
+  `S3Storage` (boto3, S3-compatible: Cloudflare R2 / Supabase Storage / Backblaze B2) khi đặt
+  `S3_BUCKET`. Cột `jobs.input_path`/`output_path` nay chứa *storage key*
+  (`uploads/{user}/{job}.pdf`…) thay vì đường dẫn đĩa.
+- Nhờ vậy app **stateless** trên host free có filesystem ephemeral (Render Free, Fly, Koyeb, HF
+  Spaces…): restart/ngủ dậy không mất tài khoản, API key, cache bản dịch hay file PDF. Không cần
+  Persistent Disk trả phí. Xem biến môi trường ở mục **Deploy** bên dưới.
 
 ✅ **Tối ưu RPD mới**
 - Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma 4 31B, Qwen; các field này ghi
@@ -50,19 +65,18 @@ cỡ chữ cho vừa).
 - Dịch văn bản dán tay vẫn giữ 1 request/lần gửi nhưng cũng hưởng lợi từ giới hạn output mới.
 
 ✅ **Kiểm tra gần nhất**
-- `python -m compileall backend/app`: pass.
-- Test tầng provider chạy thật với API key thật: Qwen3 235B (ModelScope) và Gemini dịch được cả đoạn đơn
-  lẫn batch; đường **stream** báo tiến trình tăng dần đúng số đoạn xong trong **1 request**; token in/out
-  đọc được từ phản hồi (`include_usage` hoạt động trên ModelScope).
-- Bộ đếm object JSON đang stream: unit test qua các mốc partial, xử lý đúng dấu ngoặc nằm trong chuỗi.
-- `npm run build` trong `frontend/`: pass.
-- Xác nhận không còn key dùng chung: chạy backend thật, tạo tài khoản mới chưa lưu key — gọi
-  `/api/text/translate` với `gemini` và `qwen` đều trả **400** đúng thông báo thiếu key; tài khoản
-  đã tự lưu key riêng vẫn dịch bình thường.
+- `python -m compileall backend/app`: pass. Import `app.main` thành công (11 route).
+- Sanity test FastAPI bằng `TestClient` (SQLite + đĩa cục bộ, storage tạm cô lập): bootstrap admin
+  → login → lưu API key (mã hóa AES-GCM, masked đúng) → upload/đọc glossary CSV → tạo job PDF tối giản
+  → tải PDF kết quả → xóa job/file qua `/api/settings/jobs/clear`.
+- Sanity test trực tiếp tầng DB/storage: init SQLite qua SQLAlchemy, đọc/ghi API key, cache segment,
+  storage local và `job_store` đều pass.
+- `npm run build` trong `frontend/`: pass (API không đổi nên không cần sửa frontend).
 
 ⚠️ **Chưa kiểm thử lại trong lượt cập nhật này**
-- Chưa chạy E2E một file PDF thật qua giao diện (upload → job `done` → tải PDF, kiểm bố cục) sau khi thêm
-  stream/giai đoạn; các kiểm thử ở tầng provider đã pass.
+- Chưa chạy full E2E qua giao diện thật (browser) với API key thật của một provider — lượt này
+  test qua `TestClient`/API local để xác nhận tầng DB/storage, chưa xác nhận lại bố cục PDF sau dịch.
+- Chưa test thật với Postgres (Neon)/S3 (R2 hay tương đương) — chỉ verify SQLite + đĩa cục bộ.
 
 ### Model Qwen đang dùng
 Mặc định `Qwen/Qwen3-235B-A22B-Instruct-2507` qua **ModelScope API-Inference** (server quốc tế
@@ -94,8 +108,9 @@ mình** trong ⚙ Cài đặt thì mới dịch được — không có key dùn
 - `backend/` — **Python + FastAPI + PyMuPDF**: auth/session cookie + vai trò admin, nhận PDF, dịch giữ bố cục, đa provider, đọc/ghi cấu hình runtime vào `.env`.
 
 Dịch PDF chạy theo **mẫu job bất đồng bộ**: tạo job → poll trạng thái → tải file kết quả.
-Bản dịch được **cache theo nội dung đoạn và user** (SQLite) nên hết quota/tắt máy vẫn **dịch tiếp**
-được (resume), kể cả khi đổi sang model khác, nhưng không dùng chung cache giữa các tài khoản.
+Bản dịch được **cache theo nội dung đoạn và user** (SQLAlchemy Core — SQLite cục bộ hoặc Postgres
+khi deploy) nên hết quota/tắt máy vẫn **dịch tiếp** được (resume), kể cả khi đổi sang model khác,
+nhưng không dùng chung cache giữa các tài khoản.
 
 ## Yêu cầu
 
@@ -166,14 +181,15 @@ backend/
 ├── requirements.txt
 ├── .env.example
 └── app/
-    ├── main.py                 # FastAPI app, CORS, health check, bootstrap admin
-    ├── core/                   # config.py, job_store.py, auth.py (dependencies), auth_store.py (accounts/sessions/crypto)
+    ├── main.py                 # FastAPI app, CORS, health check, bootstrap admin, init db + storage
+    ├── core/                   # config.py, db.py (engine + schema dùng chung), job_store.py, auth.py (dependencies), auth_store.py (accounts/sessions/crypto)
     ├── models/                 # Pydantic: auth, job, translate, provider, glossary, settings
     ├── routers/                # auth, pdf, text, providers, glossary, settings (lớp HTTP)
-    ├── services/               # pdf_overlay, translator, pipeline, cache, glossary, job_runner, app_settings, user_data
+    ├── services/               # pdf_overlay, translator, pipeline, cache, glossary, job_runner, app_settings, user_data, storage (object storage abstraction)
     └── providers/              # base, gemini, qwen, registry, quota_tracker
 
-backend/storage/                # uploads/, outputs/, cache/ (auth.db + segments.db + jobs.db), glossary/
+backend/storage/                # dev cục bộ (khi DATABASE_URL/S3_BUCKET trống): uploads/, outputs/,
+                                 # cache/app.db (users, user_api_keys, sessions, jobs, segment_cache), glossary/
 
 frontend/
 └── src/
@@ -187,9 +203,39 @@ tài khoản + đặt lại mật khẩu hộ user; logic tài khoản/mật kh�
 `ChangePasswordModal` (nút cạnh Đăng xuất), tách khỏi bảng Cài đặt. Router `settings`
 (backend) + `SettingsModal` (frontend) đọc/ghi API key mã hóa theo tài khoản, cấu hình Qwen
 theo tài khoản (Base URL + tên model), và dọn cache/job của user hiện tại; **giới hạn quota và Max token/request chỉ admin sửa được**
-(ghi vào `.env`). `services/user_data.py` gom logic xóa toàn bộ dữ liệu của một user (dùng khi
-admin xóa tài khoản, hoặc user tự dọn cache/job). Ở gốc còn `start.bat` để khởi động nhanh cả
-hai server.
+(ghi vào `.env`). `services/user_data.py` gom logic xóa toàn bộ dữ liệu của một user qua
+`services/storage.py` (dùng khi admin xóa tài khoản, hoặc user tự dọn cache/job). Ở gốc còn
+`start.bat` để khởi động nhanh cả hai server.
+
+## Deploy (state ra ngoài — free-tier bền vững)
+
+Mặc định (không đặt `DATABASE_URL`/`S3_BUCKET`) app lưu state trên đĩa cục bộ — phù hợp dev,
+nhưng **mất dữ liệu khi host free ngủ/restart** (filesystem ephemeral). Đặt các biến sau khi
+deploy để state sống ngoài host, bất kỳ host free nào cũng chạy bền:
+
+```
+# Bootstrap admin (lần đầu)
+ADMIN_USERNAME=...
+ADMIN_PASSWORD=...
+# Khóa mã hóa API key — BẮT BUỘC đặt cố định (python -c "import secrets;print(secrets.token_hex(32))")
+AUTH_SECRET_KEY=<64 hex>
+# DB: Neon Postgres pooled connection string (bật -pooler + sslmode=require)
+DATABASE_URL=postgresql://user:pass@ep-xxx-pooler.<region>.aws.neon.tech/neondb?sslmode=require
+# Object storage (S3-compatible: R2 / Supabase Storage / B2)
+S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com
+S3_BUCKET=maitam-files
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_REGION=auto
+# Cookie/CORS khi frontend khác domain
+AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_SAMESITE=none
+BACKEND_CORS_ORIGINS=https://<frontend-url>
+```
+
+Không có nút chuyển đổi runtime — engine/backend storage được chọn một lần khi tiến trình khởi
+động (`db.init`/`storage.init` trong `main.py` lifespan), dựa vào `DATABASE_URL`/`S3_BUCKET` lúc
+đó có rỗng hay không.
 
 ## API chính
 
@@ -218,4 +264,11 @@ hai server.
 
 1. Kiểm thử thêm trên nhiều PDF y khoa 2 cột phức tạp, đặc biệt tài liệu scan/OCR kém hoặc bảng nhiều tầng.
 2. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
-3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song.
+3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song — cần
+   thiết hơn khi deploy thật vì host free ngủ giữa chừng làm job dừng (bấm **Resume** dịch tiếp
+   được nhờ cache Postgres, nhưng job không tự chạy lại).
+4. Quota admin chỉnh trong bảng **Quản trị** vẫn ghi vào `.env` (ephemeral trên host free) — khi
+   deploy nên đặt quota qua env var lúc khởi tạo (`GEMINI_RPM_LIMIT`…) thay vì sửa runtime. Chuyển
+   quota vào DB là follow-up tùy chọn.
+5. `quota_tracker` và giới hạn đăng nhập sai (`_login_attempts`) vẫn in-memory (reset khi restart)
+   — chấp nhận được, không nằm trong phạm vi việc tách state lần này.

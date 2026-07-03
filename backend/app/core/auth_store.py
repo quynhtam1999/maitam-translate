@@ -1,5 +1,6 @@
-"""SQLite-backed accounts, sessions, and encrypted per-user API keys.
+"""Accounts, sessions, and encrypted per-user API keys (SQLAlchemy Core).
 
+Chạy trên SQLite (dev) hoặc Postgres/Neon (deploy) qua engine dùng chung ở `core/db.py`.
 Passwords are stored as PBKDF2-HMAC-SHA256 hashes. Session cookies contain only
 random tokens; the database stores token hashes. Provider API keys are encrypted
 at rest with AES-GCM (authenticated) using a server-side secret, then masked in
@@ -12,15 +13,18 @@ import base64
 import hashlib
 import hmac
 import secrets
-import sqlite3
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from . import db as db_module
+from .db import sessions, upsert, user_api_keys, users
 
 PBKDF2_ITERATIONS = 210_000
 SESSION_TOKEN_BYTES = 32
@@ -33,7 +37,6 @@ LOGIN_MAX_ATTEMPTS = 8
 LOGIN_LOCKOUT_SECONDS = 300
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
 _secret: bytes | None = None
 
 # username_norm -> {"count": int, "until": float}. Đủ nhẹ cho công cụ nội bộ.
@@ -41,69 +44,10 @@ _login_attempts: dict[str, dict[str, float]] = {}
 _attempts_lock = threading.Lock()
 
 
-def init(db_path: Path, secret_path: Path, configured_secret: str = "") -> None:
-    global _conn, _secret
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+def init_secret(secret_path: Path, configured_secret: str = "") -> None:
+    """Khởi tạo khóa mã hóa AES-GCM. Bảng DB đã được tạo qua `db.init()`."""
+    global _secret
     _secret = _load_or_create_secret(secret_path, configured_secret)
-    _conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    _conn.row_factory = sqlite3.Row
-    # SQLite tắt khoá ngoại mặc định -> bật để ON DELETE CASCADE hoạt động.
-    _conn.execute("PRAGMA foreign_keys = ON")
-    with _lock:
-        _db().execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id            TEXT PRIMARY KEY,
-                username      TEXT NOT NULL,
-                username_norm TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                is_admin      INTEGER NOT NULL DEFAULT 0,
-                created_at    REAL NOT NULL
-            )
-            """
-        )
-        _db().execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_api_keys (
-                user_id         TEXT PRIMARY KEY,
-                gemini_key_enc  TEXT,
-                qwen_key_enc    TEXT,
-                qwen_base_url   TEXT,
-                qwen_model      TEXT,
-                updated_at      REAL NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-            """
-        )
-        _db().execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id    TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                expires_at REAL NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-            """
-        )
-        _db().execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
-        user_columns = {row[1] for row in _db().execute("PRAGMA table_info(users)").fetchall()}
-        if "is_admin" not in user_columns:
-            _db().execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
-        columns = {
-            row[1] for row in _db().execute("PRAGMA table_info(user_api_keys)").fetchall()
-        }
-        if "qwen_base_url" not in columns:
-            _db().execute("ALTER TABLE user_api_keys ADD COLUMN qwen_base_url TEXT")
-        if "qwen_model" not in columns:
-            _db().execute("ALTER TABLE user_api_keys ADD COLUMN qwen_model TEXT")
-        _db().commit()
-
-
-def _db() -> sqlite3.Connection:
-    if _conn is None:
-        raise RuntimeError("auth_store has not been initialized")
-    return _conn
 
 
 def create_user(username: str, password: str, is_admin: bool = False) -> dict[str, Any]:
@@ -115,14 +59,19 @@ def create_user(username: str, password: str, is_admin: bool = False) -> dict[st
     now = time.time()
     user_id = uuid.uuid4().hex
     try:
-        with _lock:
-            _db().execute(
-                """INSERT INTO users (id, username, username_norm, password_hash, is_admin, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (user_id, username, norm, _hash_password(password), int(is_admin), now),
+        with _lock, db_module.get_engine().begin() as conn:
+            conn.execute(
+                users.insert(),
+                {
+                    "id": user_id,
+                    "username": username,
+                    "username_norm": norm,
+                    "password_hash": _hash_password(password),
+                    "is_admin": int(is_admin),
+                    "created_at": now,
+                },
             )
-            _db().commit()
-    except sqlite3.IntegrityError as exc:
+    except sa.exc.IntegrityError as exc:
         raise ValueError("Ten dang nhap da ton tai") from exc
     return {"id": user_id, "username": username, "is_admin": is_admin, "created_at": now}
 
@@ -142,52 +91,50 @@ def ensure_admin(username: str, password: str) -> None:
     if row is None:
         create_user(username, password, is_admin=True)
         return
-    with _lock:
-        _db().execute("UPDATE users SET is_admin = 1 WHERE id = ?", (row["id"],))
-        _db().commit()
+    with _lock, db_module.get_engine().begin() as conn:
+        conn.execute(users.update().where(users.c.id == row["id"]).values(is_admin=1))
 
 
 def count_admins() -> int:
-    with _lock:
-        row = _db().execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()
-    return int(row[0]) if row else 0
+    with _lock, db_module.get_engine().connect() as conn:
+        result = conn.execute(
+            sa.select(sa.func.count()).select_from(users).where(users.c.is_admin == 1)
+        )
+        return int(result.scalar() or 0)
 
 
 def list_users() -> list[dict[str, Any]]:
-    with _lock:
-        rows = _db().execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+    with _lock, db_module.get_engine().connect() as conn:
+        rows = conn.execute(users.select().order_by(users.c.created_at.asc())).mappings().all()
     return [_row_to_user(row) for row in rows]
 
 
 def delete_user(user_id: str) -> bool:
-    with _lock:
-        cur = _db().execute("DELETE FROM users WHERE id = ?", (user_id,))
-        _db().commit()
-    return cur.rowcount > 0
+    with _lock, db_module.get_engine().begin() as conn:
+        result = conn.execute(users.delete().where(users.c.id == user_id))
+    return result.rowcount > 0
 
 
 def set_password(user_id: str, new_password: str) -> None:
     if len(new_password) < 8:
         raise ValueError("Mat khau can toi thieu 8 ky tu")
-    with _lock:
-        _db().execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (_hash_password(new_password), user_id),
+    with _lock, db_module.get_engine().begin() as conn:
+        conn.execute(
+            users.update().where(users.c.id == user_id).values(password_hash=_hash_password(new_password))
         )
-        _db().commit()
 
 
 def delete_sessions_for_user(user_id: str, keep_token: str | None = None) -> None:
     keep_hash = _hash_token(keep_token) if keep_token else None
-    with _lock:
+    with _lock, db_module.get_engine().begin() as conn:
         if keep_hash:
-            _db().execute(
-                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
-                (user_id, keep_hash),
+            conn.execute(
+                sessions.delete().where(
+                    sessions.c.user_id == user_id, sessions.c.token_hash != keep_hash
+                )
             )
         else:
-            _db().execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-        _db().commit()
+            conn.execute(sessions.delete().where(sessions.c.user_id == user_id))
 
 
 def verify_user(username: str, password: str) -> dict[str, Any] | None:
@@ -229,8 +176,8 @@ def _clear_failed_login(norm: str) -> None:
 
 
 def get_user(user_id: str) -> dict[str, Any] | None:
-    with _lock:
-        row = _db().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    with _lock, db_module.get_engine().connect() as conn:
+        row = conn.execute(users.select().where(users.c.id == user_id)).mappings().first()
     return _row_to_user(row) if row else None
 
 
@@ -238,12 +185,16 @@ def create_session(user_id: str, ttl_seconds: int) -> tuple[str, float]:
     token = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
     now = time.time()
     expires_at = now + ttl_seconds
-    with _lock:
-        _db().execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (_hash_token(token), user_id, now, expires_at),
+    with _lock, db_module.get_engine().begin() as conn:
+        conn.execute(
+            sessions.insert(),
+            {
+                "token_hash": _hash_token(token),
+                "user_id": user_id,
+                "created_at": now,
+                "expires_at": expires_at,
+            },
         )
-        _db().commit()
     return token, expires_at
 
 
@@ -252,15 +203,13 @@ def get_user_by_session(token: str | None) -> dict[str, Any] | None:
         return None
     token_hash = _hash_token(token)
     now = time.time()
-    with _lock:
-        _db().execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
-        row = _db().execute(
-            """SELECT users.* FROM sessions
-               JOIN users ON users.id = sessions.user_id
-               WHERE sessions.token_hash = ? AND sessions.expires_at > ?""",
-            (token_hash, now),
-        ).fetchone()
-        _db().commit()
+    with _lock, db_module.get_engine().begin() as conn:
+        conn.execute(sessions.delete().where(sessions.c.expires_at <= now))
+        row = conn.execute(
+            sa.select(users)
+            .select_from(sessions.join(users, users.c.id == sessions.c.user_id))
+            .where(sessions.c.token_hash == token_hash, sessions.c.expires_at > now)
+        ).mappings().first()
     return _row_to_user(row) if row else None
 
 
@@ -273,22 +222,24 @@ def renew_session_if_stale(token: str | None, ttl_seconds: int, min_remaining_se
         return False
     now = time.time()
     new_expires = now + ttl_seconds
-    with _lock:
-        cur = _db().execute(
-            """UPDATE sessions SET expires_at = ?
-               WHERE token_hash = ? AND expires_at > ? AND expires_at < ?""",
-            (new_expires, _hash_token(token), now, now + min_remaining_seconds),
+    with _lock, db_module.get_engine().begin() as conn:
+        result = conn.execute(
+            sessions.update()
+            .where(
+                sessions.c.token_hash == _hash_token(token),
+                sessions.c.expires_at > now,
+                sessions.c.expires_at < now + min_remaining_seconds,
+            )
+            .values(expires_at=new_expires)
         )
-        _db().commit()
-    return cur.rowcount > 0
+    return result.rowcount > 0
 
 
 def delete_session(token: str | None) -> None:
     if not token:
         return
-    with _lock:
-        _db().execute("DELETE FROM sessions WHERE token_hash = ?", (_hash_token(token),))
-        _db().commit()
+    with _lock, db_module.get_engine().begin() as conn:
+        conn.execute(sessions.delete().where(sessions.c.token_hash == _hash_token(token)))
 
 
 def update_api_keys(
@@ -300,33 +251,23 @@ def update_api_keys(
     qwen_model: str | None = None,
 ) -> None:
     now = time.time()
-    sets: list[str] = ["updated_at = ?"]
-    params: list[Any] = [now]
+    sets: dict[str, Any] = {"updated_at": now}
     if gemini_key is not None:
-        sets.append("gemini_key_enc = ?")
-        params.append(_seal(gemini_key.strip()) if gemini_key.strip() else None)
+        sets["gemini_key_enc"] = _seal(gemini_key.strip()) if gemini_key.strip() else None
     if qwen_key is not None:
-        sets.append("qwen_key_enc = ?")
-        params.append(_seal(qwen_key.strip()) if qwen_key.strip() else None)
+        sets["qwen_key_enc"] = _seal(qwen_key.strip()) if qwen_key.strip() else None
     if qwen_base_url is not None:
-        sets.append("qwen_base_url = ?")
-        params.append(qwen_base_url.strip() or None)
+        sets["qwen_base_url"] = qwen_base_url.strip() or None
     if qwen_model is not None:
-        sets.append("qwen_model = ?")
-        params.append(qwen_model.strip() or None)
+        sets["qwen_model"] = qwen_model.strip() or None
     if len(sets) == 1:
         return
 
-    with _lock:
-        _db().execute(
-            """INSERT INTO user_api_keys (user_id, updated_at)
-               VALUES (?, ?)
-               ON CONFLICT(user_id) DO NOTHING""",
-            (user_id, now),
-        )
-        params.append(user_id)
-        _db().execute(f"UPDATE user_api_keys SET {', '.join(sets)} WHERE user_id = ?", params)
-        _db().commit()
+    with _lock, db_module.get_engine().begin() as conn:
+        stmt = upsert(user_api_keys).values(user_id=user_id, updated_at=now)
+        stmt = stmt.on_conflict_do_nothing(index_elements=["user_id"])
+        conn.execute(stmt)
+        conn.execute(user_api_keys.update().where(user_api_keys.c.user_id == user_id).values(**sets))
 
 
 def get_provider_api_key(user_id: str, provider_name: str) -> str | None:
@@ -352,27 +293,28 @@ def get_provider_options(user_id: str, provider_name: str) -> dict[str, str]:
 
 
 def get_qwen_base_url(user_id: str) -> str:
-    with _lock:
-        row = _db().execute(
-            "SELECT qwen_base_url FROM user_api_keys WHERE user_id = ?", (user_id,)
-        ).fetchone()
-    return str(row["qwen_base_url"] or "") if row else ""
+    with _lock, db_module.get_engine().connect() as conn:
+        row = conn.execute(
+            sa.select(user_api_keys.c.qwen_base_url).where(user_api_keys.c.user_id == user_id)
+        ).first()
+    return str(row[0] or "") if row else ""
 
 
 def get_qwen_model(user_id: str) -> str:
-    with _lock:
-        row = _db().execute(
-            "SELECT qwen_model FROM user_api_keys WHERE user_id = ?", (user_id,)
-        ).fetchone()
-    return str(row["qwen_model"] or "") if row else ""
+    with _lock, db_module.get_engine().connect() as conn:
+        row = conn.execute(
+            sa.select(user_api_keys.c.qwen_model).where(user_api_keys.c.user_id == user_id)
+        ).first()
+    return str(row[0] or "") if row else ""
 
 
 def get_api_keys(user_id: str) -> dict[str, str]:
-    with _lock:
-        row = _db().execute(
-            "SELECT gemini_key_enc, qwen_key_enc FROM user_api_keys WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
+    with _lock, db_module.get_engine().connect() as conn:
+        row = conn.execute(
+            sa.select(user_api_keys.c.gemini_key_enc, user_api_keys.c.qwen_key_enc).where(
+                user_api_keys.c.user_id == user_id
+            )
+        ).mappings().first()
     if row is None:
         return {"gemini": "", "qwen": ""}
     return {
@@ -397,12 +339,12 @@ def mask_key(key: str) -> str:
     return "****" + key[-4:]
 
 
-def _get_user_by_norm(norm: str) -> sqlite3.Row | None:
-    with _lock:
-        return _db().execute("SELECT * FROM users WHERE username_norm = ?", (norm,)).fetchone()
+def _get_user_by_norm(norm: str) -> Any:
+    with _lock, db_module.get_engine().connect() as conn:
+        return conn.execute(users.select().where(users.c.username_norm == norm)).mappings().first()
 
 
-def _row_to_user(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_user(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
         "username": row["username"],
