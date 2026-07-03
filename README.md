@@ -33,6 +33,8 @@ cỡ chữ cho vừa).
 - API key Gemini/Qwen lưu riêng theo từng tài khoản trong SQLite
   (`backend/storage/cache/auth.db`), mã hóa at-rest bằng AES-GCM với secret server-side
   (`AUTH_SECRET_KEY` hoặc `auth_secret.key`). Backend chỉ trả trạng thái/masked key, không trả key gốc.
+- **Không có key dùng chung**: `.env` không cấu hình API key Gemini/Gemma/Qwen, và tầng provider
+  không fallback về key toàn cục nào — tài khoản chưa tự lưu key sẽ bị chặn (400) ngay khi gọi dịch.
 - Bảng **Cài đặt** cho phép nhập/xóa API key theo tài khoản, cấu hình Qwen theo tài khoản
   (API key ModelScope + Base URL + tên model), xem thống kê cache/job và xóa cache/job riêng của user.
 
@@ -54,6 +56,9 @@ cỡ chữ cho vừa).
   đọc được từ phản hồi (`include_usage` hoạt động trên ModelScope).
 - Bộ đếm object JSON đang stream: unit test qua các mốc partial, xử lý đúng dấu ngoặc nằm trong chuỗi.
 - `npm run build` trong `frontend/`: pass.
+- Xác nhận không còn key dùng chung: chạy backend thật, tạo tài khoản mới chưa lưu key — gọi
+  `/api/text/translate` với `gemini` và `qwen` đều trả **400** đúng thông báo thiếu key; tài khoản
+  đã tự lưu key riêng vẫn dịch bình thường.
 
 ⚠️ **Chưa kiểm thử lại trong lượt cập nhật này**
 - Chưa chạy E2E một file PDF thật qua giao diện (upload → job `done` → tải PDF, kiểm bố cục) sau khi thêm
@@ -61,10 +66,13 @@ cỡ chữ cho vừa).
 
 ### Model Qwen đang dùng
 Mặc định `Qwen/Qwen3-235B-A22B-Instruct-2507` qua **ModelScope API-Inference** (server quốc tế
-`https://api-inference.modelscope.ai/v1`). Cấu hình gồm **3 trường** (nhập trong ⚙ Cài đặt, hoặc đặt sẵn
-trong `.env`): **API key ModelScope** (lấy ở [modelscope.ai](https://modelscope.ai), dạng `ms-...`),
-**Base URL** và **tên model** — cả ba đều sửa được để đổi sang model ModelScope khác. Khác Gemini/Gemma,
-Qwen **bắt buộc phải có API key** thì mới dịch được.
+`https://api-inference.modelscope.ai/v1`). Cấu hình gồm **3 trường**, nhập trong ⚙ Cài đặt theo
+từng tài khoản: **API key ModelScope** (lấy ở [modelscope.ai](https://modelscope.ai), dạng `ms-...`),
+**Base URL** và **tên model** — cả ba đều sửa được để đổi sang model ModelScope khác.
+
+**Mọi provider (Gemini, Gemma 4 31B, Qwen) đều bắt buộc mỗi tài khoản tự nhập API key riêng của
+mình** trong ⚙ Cài đặt thì mới dịch được — không có key dùng chung của admin hay tài khoản khác;
+`.env` không cấu hình API key.
 
 ### Cách xử lý quota
 
@@ -116,7 +124,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate          # PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env          # rồi điền GEMINI_API_KEY / QWEN_API_KEY khi có
+copy .env.example .env          # rồi điền ADMIN_USERNAME/ADMIN_PASSWORD (API key provider nhập sau, theo từng tài khoản, trong ⚙ Cài đặt)
 uvicorn app.main:app --reload --port 8000
 ```
 

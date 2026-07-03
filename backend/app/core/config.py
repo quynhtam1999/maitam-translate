@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     )
 
     # Providers
-    gemini_api_key: str = ""
-    qwen_api_key: str = ""
     qwen_base_url: str = "https://api-inference.modelscope.ai/v1"
     qwen_model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
 

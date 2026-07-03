@@ -192,10 +192,9 @@ def validate_qwen_base_url(base_url: str) -> None:
 def _resolve_connection(
     api_key: str | None, provider_options: dict | None = None
 ) -> tuple[str, str]:
-    settings = get_settings()
     base_url = resolve_qwen_base_url(provider_options)
     validate_qwen_base_url(base_url)
-    key = (api_key or settings.qwen_api_key or _DEFAULT_API_KEY).strip()
+    key = (api_key or _DEFAULT_API_KEY).strip()
     return base_url, key or _DEFAULT_API_KEY
 
 

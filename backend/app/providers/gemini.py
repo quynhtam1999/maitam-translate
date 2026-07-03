@@ -39,7 +39,7 @@ class GeminiProvider(BaseProvider):
             self.display_name = display_name
 
     def is_configured(self) -> bool:
-        return bool(get_settings().gemini_api_key)
+        return True
 
     def get_limits(self) -> RateLimits:
         s = get_settings()
@@ -65,7 +65,6 @@ class GeminiProvider(BaseProvider):
         api_key: str | None = None,
         provider_options: dict | None = None,
     ) -> TranslationResult:
-        api_key = api_key or get_settings().gemini_api_key
         if not api_key:
             raise RuntimeError("Chưa có API key cho Gemini/Gemma 4 31B — nhập trong ⚙ Cài đặt")
 
@@ -105,7 +104,6 @@ class GeminiProvider(BaseProvider):
         if not texts:
             return BatchTranslationResult(texts=[])
 
-        api_key = api_key or get_settings().gemini_api_key
         if not api_key:
             raise RuntimeError("Chưa có API key cho Gemini/Gemma 4 31B — nhập trong ⚙ Cài đặt")
 
