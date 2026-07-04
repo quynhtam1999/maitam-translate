@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://maitam-translate-dtq7.onrender.com/api/:path*"
+    }
+  ]
+}

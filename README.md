@@ -167,12 +167,16 @@ uvicorn app.main:app --reload --port 8000
 > Khi deploy qua HTTPS thật, nhớ đặt `AUTH_COOKIE_SECURE=true` và một `AUTH_SECRET_KEY` dài,
 > riêng cho server (nếu để trống app tự sinh secret cục bộ, không di chuyển được sang máy khác).
 >
-> **Deploy frontend (Vercel) tách domain với backend** là truy cập **cross-site** — trình duyệt
-> chỉ gửi kèm cookie phiên nếu đặt `AUTH_COOKIE_SAMESITE=none` (tự bật kèm `Secure`, nên backend
-> bắt buộc chạy HTTPS). Nếu để mặc định `lax`, giao diện vẫn đăng nhập được nhưng mọi thao tác
-> cần xác thực sau đó (ví dụ lưu API key) sẽ báo lỗi *"Vui lòng đăng nhập..."* do cookie bị chặn.
-> Đồng thời `BACKEND_CORS_ORIGINS` phải liệt kê đúng URL Vercel (không dùng `*` vì có
-> `allow_credentials`), và frontend cần `VITE_API_URL` trỏ tới URL backend HTTPS.
+> **Deploy frontend (Vercel) + backend (Render) khác domain** → dùng **Vercel rewrites** để
+> proxy `/api/*` sang backend, biến request thành **same-site** thay vì cross-site (cookie
+> phiên không còn bị trình duyệt di động/Safari chặn nữa, không cần `AUTH_COOKIE_SAMESITE=none`).
+> Xem `frontend/vercel.json` (đích trỏ tới URL Render thật). Kèm theo:
+> - Đặt biến môi trường `VITE_API_URL=/api` (đường dẫn tương đối, **không** trỏ thẳng URL Render)
+>   trong Vercel Project Settings → Environment Variables, rồi redeploy.
+> - `BACKEND_CORS_ORIGINS`/`AUTH_COOKIE_SAMESITE` giữ mặc định (`lax`) là đủ vì trình duyệt giờ
+>   chỉ thấy request cùng domain Vercel; `AUTH_COOKIE_SECURE=true` vẫn nên bật vì Vercel luôn HTTPS.
+> - Render free tier tự ngủ sau ~15 phút không dùng — request đầu tiên qua proxy có thể chờ
+>   vài chục giây để backend khởi động lại, không liên quan tới cấu hình proxy.
 
 Mở `http://localhost:8000/docs` để xem & thử các API (Swagger UI).
 
