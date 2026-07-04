@@ -33,6 +33,8 @@ cỡ chữ cho vừa).
 - Bảng giới hạn quota trong ⚙ Cài đặt chuyển từ lưới 5 cột (phải cuộn ngang) sang các ô xếp dọc có nhãn
   RPM/TPM/RPD/Max token riêng từng ô trên mobile; desktop vẫn giữ dạng lưới cũ.
 - Bảng danh sách tài khoản trong **Quản trị** reflow thành thẻ xếp dọc trên mobile thay vì bảng bị tràn.
+- Khung nội dung chính (`.app`) rộng hơn trên desktop (`max-width: 1200px`, trước là 860px) để đỡ chật
+  trên màn hình lớn; layout mobile (≤720px) không đổi.
 
 ✅ **Auth, tài khoản và cấu hình**
 - Không có đăng ký công khai. Chỉ admin tạo/xóa tài khoản hoặc đặt lại mật khẩu hộ user qua bảng
