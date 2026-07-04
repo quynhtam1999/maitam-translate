@@ -270,22 +270,22 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <span className="quota-grid-head">Max token/request</span>
 
                 <span className="quota-grid-label">Gemini 3.1 Flash Lite</span>
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpm_limit} onChange={setNumField("gemini_rpm_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_tpm_limit} onChange={setNumField("gemini_tpm_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemini_max_tokens_per_request} onChange={setNumField("gemini_max_tokens_per_request")} />
+                <label className="quota-cell"><span className="quota-cell-label">RPM</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpm_limit} onChange={setNumField("gemini_rpm_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">TPM</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_tpm_limit} onChange={setNumField("gemini_tpm_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">RPD</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">Max token/request</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_max_tokens_per_request} onChange={setNumField("gemini_max_tokens_per_request")} /></label>
 
                 <span className="quota-grid-label">Gemma 4 31B</span>
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpm_limit} onChange={setNumField("gemma_rpm_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_tpm_limit} onChange={setNumField("gemma_tpm_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpd_limit} onChange={setNumField("gemma_rpd_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.gemma_max_tokens_per_request} onChange={setNumField("gemma_max_tokens_per_request")} />
+                <label className="quota-cell"><span className="quota-cell-label">RPM</span><input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpm_limit} onChange={setNumField("gemma_rpm_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">TPM</span><input type="number" min="0" disabled={!isAdmin} value={form.gemma_tpm_limit} onChange={setNumField("gemma_tpm_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">RPD</span><input type="number" min="0" disabled={!isAdmin} value={form.gemma_rpd_limit} onChange={setNumField("gemma_rpd_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">Max token/request</span><input type="number" min="0" disabled={!isAdmin} value={form.gemma_max_tokens_per_request} onChange={setNumField("gemma_max_tokens_per_request")} /></label>
 
                 <span className="quota-grid-label">Qwen</span>
-                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_rpm_limit} onChange={setNumField("qwen_rpm_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_tpm_limit} onChange={setNumField("qwen_tpm_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_rpd_limit} onChange={setNumField("qwen_rpd_limit")} />
-                <input type="number" min="0" disabled={!isAdmin} value={form.qwen_max_tokens_per_request} onChange={setNumField("qwen_max_tokens_per_request")} />
+                <label className="quota-cell"><span className="quota-cell-label">RPM</span><input type="number" min="0" disabled={!isAdmin} value={form.qwen_rpm_limit} onChange={setNumField("qwen_rpm_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">TPM</span><input type="number" min="0" disabled={!isAdmin} value={form.qwen_tpm_limit} onChange={setNumField("qwen_tpm_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">RPD</span><input type="number" min="0" disabled={!isAdmin} value={form.qwen_rpd_limit} onChange={setNumField("qwen_rpd_limit")} /></label>
+                <label className="quota-cell"><span className="quota-cell-label">Max token/request</span><input type="number" min="0" disabled={!isAdmin} value={form.qwen_max_tokens_per_request} onChange={setNumField("qwen_max_tokens_per_request")} /></label>
               </div>
             </section>
 

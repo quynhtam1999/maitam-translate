@@ -190,6 +190,39 @@
   padding: 0.52rem 0.8rem;
 }
 
+/* Mobile menu toggle — hidden on desktop, shown via media query */
+.menu-toggle {
+  display: none;
+  position: relative;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  background: rgba(124, 58, 237, 0.12);
+  border-radius: 12px;
+  color: var(--ink);
+  max-width: 60%;
+}
+.menu-toggle .user-chip-mini {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+.menu-toggle .menu-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.menu-toggle.open {
+  border-color: var(--brand);
+  background: rgba(168, 85, 247, 0.22);
+}
+
+.menu-backdrop {
+  display: none;
+}
+
 .settings-btn:hover {
   border-color: var(--brand);
   background: rgba(168, 85, 247, 0.22);
@@ -662,6 +695,13 @@ button:disabled {
   font-size: 0.88rem;
   color: var(--ink);
 }
+/* On desktop the cell wrapper dissolves so inputs sit directly in the grid */
+.quota-cell {
+  display: contents;
+}
+.quota-cell-label {
+  display: none;
+}
 .quota-grid input {
   padding: 0.45rem 0.5rem;
   border: 1px solid var(--line-strong);
@@ -778,23 +818,306 @@ button:disabled {
   flex-wrap: wrap;
 }
 
-/* Responsive */
-@media (max-width: 560px) {
-  .settings-btn-label {
-    display: none;
+/* ================= Responsive / mobile ================= */
+@media (max-width: 720px) {
+  .app {
+    margin: 1rem auto 0;
+    padding: 0 0.75rem 2rem;
   }
+
+  /* ----- Header collapses into a dropdown menu ----- */
   .app-header {
-    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.9rem 1rem;
+    overflow: visible; /* allow the dropdown to escape the card */
+    flex-wrap: nowrap;
+    z-index: 40; /* keep the dropdown above the tabs/card below it */
   }
+  .logo {
+    width: 44px;
+    height: 44px;
+  }
+  .app-header h1 {
+    font-size: 1.2rem;
+  }
+  .subtitle {
+    display: none; /* keep the header compact on phones */
+  }
+
+  .menu-toggle {
+    display: inline-flex;
+  }
+
   .header-actions {
+    display: none;
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    left: 0;
+    z-index: 60;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: linear-gradient(180deg, rgba(30, 24, 44, 0.99), rgba(20, 16, 30, 0.99));
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+  .header-actions .btn-ghost {
+    background: rgba(168, 85, 247, 0.1);
+  }
+  .header-actions.open {
+    display: flex;
+    animation: modal-in 0.16s ease-out;
+  }
+  .header-actions .user-chip {
+    display: none; /* username already shown in the toggle */
+  }
+  .header-actions .btn-ghost,
+  .header-actions .settings-btn {
     width: 100%;
-    justify-content: flex-start;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 0.98rem;
+  }
+  .settings-btn-label {
+    display: inline;
+  }
+
+  .menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: transparent;
+  }
+
+  /* ----- Tabs become full-width, larger tap targets ----- */
+  .tabs {
+    margin-top: 1.1rem;
+    padding-left: 0;
+    gap: 0.3rem;
+  }
+  .tabs button {
+    flex: 1;
+    padding: 0.7rem 0.5rem;
+    font-size: 0.95rem;
+    min-height: 46px;
+  }
+
+  .card {
+    border-radius: var(--radius);
+    padding: 1.1rem;
+  }
+
+  /* ----- Forms: full-width controls, comfortable taps ----- */
+  .upload-form select,
+  .text-toolbar select {
+    width: 100%;
+    min-height: 46px;
+    font-size: 16px; /* prevents iOS zoom-on-focus */
+  }
+  .upload-form label,
+  .text-toolbar label {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    width: 100%;
+  }
+  /* Checkboxes stay inline — only field labels stack */
+  .upload-form label.checkbox,
+  label.checkbox {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    width: auto;
+  }
+  .upload-form label.checkbox input,
+  label.checkbox input {
+    width: 1.15rem;
+    height: 1.15rem;
+    flex: none;
+  }
+  .upload-form button[type="submit"] {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .text-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .text-toolbar button {
+    width: 100%;
+    min-height: 46px;
   }
   .text-columns {
     grid-template-columns: 1fr;
   }
+  .text-columns textarea {
+    min-height: 200px;
+    font-size: 16px;
+  }
+
+  .download-btn {
+    display: block;
+    text-align: center;
+    min-height: 48px;
+    line-height: 1.6;
+  }
+
+  .resume-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .resume-box select {
+    min-height: 46px;
+    font-size: 16px;
+  }
+  .resume-box button {
+    width: 100%;
+    min-height: 46px;
+  }
+
+  /* ----- Modals go near full-screen on phones ----- */
+  .modal-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+  .modal {
+    max-width: 100%;
+    min-height: 100%;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+  .modal-narrow {
+    max-width: 100%;
+  }
+  .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: rgba(16, 13, 24, 0.96);
+    backdrop-filter: blur(8px);
+    padding: 1rem 1.1rem;
+  }
+  .icon-btn {
+    font-size: 1.5rem;
+    padding: 0.35rem 0.7rem;
+  }
+  .modal-body {
+    padding: 1.1rem;
+  }
+  .modal-footer {
+    position: sticky;
+    bottom: 0;
+    background: rgba(16, 13, 24, 0.96);
+    backdrop-filter: blur(8px);
+    padding: 0.9rem 1.1rem;
+    flex-wrap: wrap;
+  }
+  .modal-footer .btn-primary,
+  .modal-footer .btn-ghost {
+    flex: 1;
+    min-height: 46px;
+  }
+  .modal-footer .toast {
+    flex-basis: 100%;
+    text-align: center;
+    margin: 0 0 0.3rem;
+  }
+
+  .field input[type="text"],
+  .field input[type="password"],
+  .field input[type="number"] {
+    font-size: 16px;
+    min-height: 46px;
+  }
+
+  .cache-actions {
+    flex-direction: column;
+  }
+  .cache-actions .btn-danger-ghost {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  /* ----- Quota grid → labeled stacked cards (no horizontal scroll) ----- */
   .quota-grid {
-    grid-template-columns: minmax(116px, 1fr) repeat(4, minmax(74px, 1fr));
-    font-size: 0.8rem;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 0.6rem;
+    overflow-x: visible;
+  }
+  .quota-grid-head {
+    display: none;
+  }
+  .quota-grid-label {
+    grid-column: 1 / -1;
+    font-weight: 600;
+    color: var(--brand);
+    margin-top: 0.7rem;
+  }
+  .quota-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .quota-cell-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .quota-grid input {
+    text-align: left;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  /* ----- Admin table reflows to stacked rows ----- */
+  .admin-user-table,
+  .admin-user-table tbody,
+  .admin-user-table tr,
+  .admin-user-table td {
+    display: block;
+    width: 100%;
+  }
+  .admin-user-table thead {
+    display: none;
+  }
+  .admin-user-table tr {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.7rem;
+  }
+  .admin-user-table td {
+    border: none;
+    padding: 0.25rem 0;
+  }
+  .admin-user-actions {
+    justify-content: stretch;
+    margin-top: 0.4rem;
+  }
+  .admin-user-actions .btn-ghost,
+  .admin-user-actions .btn-danger-ghost {
+    flex: 1;
+    min-height: 42px;
+  }
+
+  .app-footer {
+    text-align: center;
+    padding: 0 0.5rem;
+  }
+}
+
+/* Very small phones */
+@media (max-width: 380px) {
+  .app-header h1 {
+    font-size: 1.05rem;
+  }
+  .menu-toggle {
+    max-width: 55%;
   }
 }

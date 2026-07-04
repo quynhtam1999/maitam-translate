@@ -20,6 +20,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [providersVersion, setProvidersVersion] = useState(0);
 
   useEffect(() => {
@@ -63,7 +64,10 @@ export default function App() {
     setSettingsOpen(false);
     setAdminOpen(false);
     setPasswordOpen(false);
+    setMenuOpen(false);
   };
+
+  const closeMenu = () => setMenuOpen(false);
 
   if (authLoading) {
     return (
@@ -90,14 +94,31 @@ export default function App() {
             Dịch tài liệu PDF y khoa sang tiếng Việt - giữ nguyên bố cục
           </p>
         </div>
-        <div className="header-actions">
+        <button
+          className={`menu-toggle${menuOpen ? " open" : ""}`}
+          onClick={() => setMenuOpen((o) => !o)}
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+        >
+          <span className="user-chip-mini" title={user.username}>
+            {user.username}
+          </span>
+          <span className="menu-icon">☰</span>
+        </button>
+
+        {menuOpen && <div className="menu-backdrop" onClick={closeMenu} />}
+
+        <div className={`header-actions${menuOpen ? " open" : ""}`}>
           <span className="user-chip" title={user.username}>
             {user.username}
           </span>
           {user.is_admin && (
             <button
               className="btn-ghost"
-              onClick={() => setAdminOpen(true)}
+              onClick={() => {
+                setAdminOpen(true);
+                closeMenu();
+              }}
               title="Quản trị tài khoản"
             >
               Quản trị
@@ -105,7 +126,10 @@ export default function App() {
           )}
           <button
             className="settings-btn"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => {
+              setSettingsOpen(true);
+              closeMenu();
+            }}
             aria-label="Cài đặt"
             title="Cài đặt"
           >
@@ -114,7 +138,10 @@ export default function App() {
           </button>
           <button
             className="btn-ghost"
-            onClick={() => setPasswordOpen(true)}
+            onClick={() => {
+              setPasswordOpen(true);
+              closeMenu();
+            }}
             title="Đổi mật khẩu"
           >
             Đổi mật khẩu

@@ -9,7 +9,7 @@ Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **ti
 giữ bố cục dùng **overlay PyMuPDF** (xóa chữ gốc tại chỗ + chèn bản dịch đè lên, tự co
 cỡ chữ cho vừa).
 
-## Trạng thái hiện tại (cập nhật 2026-07-03)
+## Trạng thái hiện tại (cập nhật 2026-07-04)
 
 ✅ **Tính năng chính đã có**
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
@@ -22,6 +22,17 @@ cỡ chữ cho vừa).
 - PDF overlay bằng PyMuPDF: bóc chữ, xóa chữ gốc tại chỗ, chèn bản dịch, hỗ trợ tài liệu 2 cột,
   giữ ảnh/biểu đồ và tách bảng vector theo cell/dòng để hạn chế vỡ bố cục.
 - Ảnh/biểu đồ chưa OCR nên không dịch chữ nằm trong ảnh; caption và chữ thật ngoài vùng ảnh vẫn được dịch.
+
+✅ **Giao diện thân thiện với mobile**
+- Header thu gọn thành nút `tên tài khoản ☰` mở panel thả xuống (Quản trị / Cài đặt / Đổi mật khẩu /
+  Đăng xuất) trên màn hình ≤720px, thay vì dàn hàng ngang dễ vỡ layout; desktop giữ nguyên các nút inline.
+- Tabs, nút, ô chọn/nhập đều đạt vùng chạm ≥44px; input/textarea/select dùng `font-size: 16px` để
+  tránh Safari/iOS tự phóng to khi focus.
+- Modal (Cài đặt, Quản trị, Đổi mật khẩu) hiển thị gần full-screen trên điện thoại, header và thanh nút
+  dưới cùng dính (sticky) khi cuộn.
+- Bảng giới hạn quota trong ⚙ Cài đặt chuyển từ lưới 5 cột (phải cuộn ngang) sang các ô xếp dọc có nhãn
+  RPM/TPM/RPD/Max token riêng từng ô trên mobile; desktop vẫn giữ dạng lưới cũ.
+- Bảng danh sách tài khoản trong **Quản trị** reflow thành thẻ xếp dọc trên mobile thay vì bảng bị tràn.
 
 ✅ **Auth, tài khoản và cấu hình**
 - Không có đăng ký công khai. Chỉ admin tạo/xóa tài khoản hoặc đặt lại mật khẩu hộ user qua bảng
