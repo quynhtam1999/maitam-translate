@@ -89,6 +89,52 @@ cỡ chữ cho vừa).
   trắng cả tài liệu. Request hỏng vẫn được `quota_tracker.record()` vì nó **đã tiêu quota thật** —
   không ghi thì RPM/RPD bị đếm thiếu.
 
+✅ **Gộp mảnh câu bị PDF cắt ngang (2026-07-15)**
+- `collect_segments` bóc chữ **theo vị trí trên trang** để chèn bản dịch lại đúng bbox, nên một câu
+  bị cắt ở biên khối/cột/trang thành nhiều mảnh và mỗi mảnh từng là một đơn vị dịch riêng — model
+  nhận được thứ như `'ited bone marrow failure. In a child with a history of bone'` (đuôi của
+  *inherited*). Không model nào dịch chuẩn được mảnh như vậy: đây là **trần chất lượng chung**,
+  không phải lỗi provider.
+- `services/segment_merge.py` gộp các mảnh liền mạch trong thứ tự đọc thành **đơn vị dịch**, dịch
+  trọn câu, rồi **cắt bản dịch trả về từng bbox theo tỉ lệ độ dài nguồn**, luôn cắt ở ranh giới từ.
+  > **Vì sao cắt theo tỉ lệ là đúng dù trật tự từ Việt/Anh khác nhau**: người đọc đọc các bbox
+  > *theo thứ tự đọc*, nên chỗ cắt không cần khớp ngữ nghĩa với mảnh gốc — chỉ cần ghép các phần
+  > lại đúng thứ tự thì ra nguyên văn bản dịch, và mỗi phần vừa bbox của nó.
+- **Đo trên 2 tài liệu y khoa 2 cột thật** (1176 khối, tạp chí + sách): mảnh văn xuôi **cụt đầu giảm
+  ~40%** (106→64 và 60→45), gộp được cả qua **biên cột** (đáy cột trái → đỉnh cột phải) và qua
+  **biên trang**. Soi tay toàn bộ các chỗ nối qua biên cột/trang: **không ca nào gộp nhầm**
+  (`'…may result in a'` + `'higher prevalence of disease…'`). Ngưỡng chỉnh trên tài liệu thứ nhất
+  chạy thẳng trên tài liệu thứ hai không phải sửa gì. Phần cụt đầu còn lại phần lớn là **dòng bảng**
+  (việc #1, không phải luật gộp câu) → xét riêng văn xuôi thì giảm quá nửa.
+- **Bonus RPD**: gộp làm số đơn vị dịch duy nhất giảm ~8% (ít việc gọi API hơn), số request không đổi.
+- **Không làm rơi thêm chữ, không làm đoạn lởm chởm hơn** — so cũ/mới cùng một bản dịch giả giãn
+  1.15×: số bbox tràn **giảm nhẹ** ở cả hai tài liệu (157→154 và 31→29). Chênh cỡ chữ trong cùng
+  đoạn gộp: trung vị **0.0pt**, tối đa 2.8pt — **bản cũ cũng y hệt** (0.0 / 2.9pt), tức độ lởm chởm
+  là vốn có chứ không do cắt theo tỉ lệ. Lý do: cắt theo tỉ lệ giữ nguyên hệ số giãn ở mọi mảnh nên
+  Fitter co chữ đều như trước.
+- ⚠️ **Cache bản dịch cũ thành vô dụng một lần**: khoá cache là *nội dung đơn vị dịch*, nay là câu
+  đã gộp thay vì từng mảnh. Job cũ sẽ dịch lại từ đầu (tốn RPD một lần), không phải lỗi.
+- Luật gộp cố ý **chặt** (sai một lần gộp là trộn nội dung hai khối không liên quan, hại hơn cái nó
+  sửa): phải **cụt đuôi ở mảnh trước + mở đầu bằng chữ thường ở mảnh sau**, cùng kiểu chữ, và hình
+  học phải hợp lý — cùng cột thì khe dọc nhỏ, tràn cột/trang thì mảnh trước phải **chạm đáy cột**.
+  Không chắc thì không gộp: mảnh giữ nguyên như trước, không tệ đi.
+
+✅ **Thứ tự đọc & header chạy trang (2026-07-15, viết lại cùng đợt)**
+- Thứ tự đọc cũ (`_reading_order_key`) xếp **mọi khối ở 22% đầu trang** vào "băng header" — tức
+  nuốt luôn đỉnh cả hai cột thân bài rồi trộn chúng vào nhau. Trước đây vô hại (mỗi bbox dịch độc
+  lập, chèn lại theo `block_id`) nhưng việc gộp câu thì **phụ thuộc hoàn toàn** vào thứ tự đọc đúng.
+  Nay thay bằng thuật toán **băng/cột**: khối chạy ngang cả trang (rộng ≥72%) cắt băng, trong mỗi
+  băng đọc hết cột trái rồi cột phải; phân cột theo **tâm khối**, không theo "có cắt qua tâm trang"
+  (đo được: cột trái chạy tới x=302 còn cột phải bắt đầu x=294 — **hai cột đều lấn qua tâm 297**).
+- Header/footer chạy trang nhận diện bằng **chữ lặp lại** (sau khi bỏ số trang), **không** bằng vị
+  trí lặp lại: đo được băng `y0≈58` trúng 10/15 trang nhưng **toàn là thân bài** — đỉnh khung chữ
+  đương nhiên lặp y0 ở mọi trang. Kết quả: đúng **15/372 khối** là furniture, mỗi trang 1, không
+  bắt nhầm khối nào. Chúng bị **bỏ qua trong mạch đọc** (nhờ vậy cuối trang trước nối được đầu
+  trang sau) nhưng **vẫn được dịch** bình thường.
+- Footer trang mở chương (`111 DOI: 10.1201/…`) nằm **trong cột trái, dưới cùng**, nên từng chen
+  vào giữa đáy cột trái và đỉnh cột phải và cắt đứt mạch nối; nay bắt bằng luật riêng "không thân
+  bài nào chạy xuống 5% cuối trang" (đo được: đáy thân bài y1=743, footer y1=773, trang cao 792).
+
 ✅ **Kiểm tra gần nhất (2026-07-15) — E2E THẬT với API key thật**
 - **Dịch trọn `pedsinreview.2021005273.pdf`** (20 trang, 804 đoạn / 738 đoạn duy nhất) bằng
   **Gemini 3.1 Flash Lite**, cache rỗng để ép gọi API thật: **738/738 đoạn, 4 request, 124s**,
@@ -105,6 +151,11 @@ cỡ chữ cho vừa).
 - `npm run build` trong `frontend/`: pass (API không đổi nên không cần sửa frontend).
 
 ⚠️ **Chưa kiểm thử**
+- **Cơ chế gộp mảnh câu mới chỉ chạy E2E với provider GIẢ**, chưa gọi API thật. Đã verify trên cả 2
+  tài liệu: 100% block_id có bản dịch, mọi đơn vị gộp ghép lại từ các bbox đều khớp nguyên văn, xuất
+  PDF OK, số request không đổi, và so số bbox tràn với code cũ. Nhưng **chưa đo lại chất lượng dịch
+  thật** để biết việc gộp cải thiện được bao nhiêu — đó mới là mục đích của thay đổi này (xem *Chất
+  lượng dịch* ở trên).
 - Đã chạy E2E thật ở tầng backend (pipeline dịch + xuất PDF, API key thật), nhưng **chưa bấm qua
   giao diện browser** và **chưa mở PDF kết quả để mắt người soi lại bố cục** sau dịch.
 - Chưa test thật với Postgres (Neon)/S3 (R2 hay tương đương) — chỉ verify SQLite + đĩa cục bộ.
@@ -163,7 +214,9 @@ So trên 14 đoạn mẫu của `pedsinreview.2021005273.pdf`, lấy bản dịc
 Khác biệt cần lưu ý: **Qwen đổi dấu thập phân sang kiểu Việt** (`14,0`), **Gemini giữ kiểu Anh**
 (`14.0`). Cả hai đều biện hộ được, nhưng không thống nhất trong cùng bảng xét nghiệm thì dễ đọc nhầm.
 
-Nhiều lỗi trong bảng trên **bắt nguồn từ đoạn bị cắt giữa câu** (xem TODO #0), không phải model kém.
+Nhiều lỗi trong bảng trên **bắt nguồn từ đoạn bị cắt giữa câu**, không phải model kém — bảng này đo
+**trước** khi có cơ chế gộp mảnh câu (xem mục *Gộp mảnh câu*), nên **cần đo lại** thì mới biết còn
+lại bao nhiêu là lỗi thật của model. Ví dụ "bỏ mất *inherited*" của Gemini chính là ca mảnh cụt.
 
 ## Bài học: vì sao batch dịch hỏng (đo thật 2026-07-15)
 
@@ -286,7 +339,7 @@ backend/
     ├── core/                   # config.py, db.py (engine + schema dùng chung), job_store.py, auth.py (dependencies), auth_store.py (accounts/sessions/crypto)
     ├── models/                 # Pydantic: auth, job, translate, provider, glossary, settings
     ├── routers/                # auth, pdf, text, providers, glossary, settings (lớp HTTP)
-    ├── services/               # pdf_overlay, translator, pipeline, cache, glossary, job_runner, app_settings, user_data, storage (object storage abstraction)
+    ├── services/               # pdf_overlay, segment_merge (gộp mảnh câu + cắt bản dịch về từng bbox), translator, pipeline, cache, glossary, job_runner, app_settings, user_data, storage (object storage abstraction)
     └── providers/              # base, gemini, qwen, registry, quota_tracker
 
 backend/storage/                # dev cục bộ (khi DATABASE_URL/S3_BUCKET trống): uploads/, outputs/,
@@ -363,16 +416,18 @@ Không có nút chuyển đổi runtime — engine/backend storage được ch�
 
 ## Việc cần làm tiếp (TODO)
 
-0. **Đoạn bị cắt giữa câu — trần chất lượng dịch hiện tại.** `collect_segments` bóc chữ **theo vị
-   trí trên trang** (để chèn bản dịch lại đúng bbox), nên với báo 2 cột một câu bị cắt ngang ở
-   biên cột/khối và mỗi mảnh thành một đơn vị dịch riêng. Đo trên `pedsinreview.2021005273.pdf`
-   (440 đoạn văn xuôi): **28% bắt đầu giữa câu, 72% kết thúc giữa câu, 22% cụt cả hai đầu**. Ví dụ
-   đoạn model thật sự nhận được: `'ited bone marrow failure. In a child with a history of bone'`
-   (bắt đầu bằng đuôi của "inherited"). Không model nào dịch chuẩn được mảnh như vậy — đây là
-   trần chất lượng chung, **không phải lỗi provider**. Hướng sửa: gộp các mảnh liền mạch trong
-   cùng khối/cột để dịch, rồi phân bổ bản dịch ngược lại từng bbox (phần phân bổ ngược là chỗ khó
-   vì phải giữ bố cục).
-1. Kiểm thử thêm trên nhiều PDF y khoa 2 cột phức tạp, đặc biệt tài liệu scan/OCR kém hoặc bảng nhiều tầng.
+0. **Đoạn bị cắt giữa câu — đã sửa cho VĂN XUÔI (2026-07-15).** Xem mục *Gộp mảnh câu* ở trên.
+   Phần cụt đầu còn lại **phần lớn là dòng bảng**, không phải văn xuôi: `_looks_like_table_block`
+   cắt bảng **theo dòng**, nên một ô bảng nhiều dòng vỡ thành nhiều mảnh
+   (`'• Includes a pre-IVM culture and the IVM culture'` / `'prior to IVM culture [88]'`). Gộp đúng
+   chúng cần biết ranh giới **ô**, không phải dòng → thuộc việc #1, không phải luật gộp câu. Số ít
+   ca văn xuôi còn lại chủ yếu do mạch đọc đứt vì khối chen giữa **bị bỏ do đè lên ảnh**
+   (`_overlaps_image`), nên khối liền trước kết thúc trọn câu và không có gì để nối.
+1. Kiểm thử thêm trên nhiều PDF y khoa 2 cột phức tạp, đặc biệt tài liệu scan/OCR kém hoặc bảng
+   nhiều tầng. Ưu tiên **xử lý bảng**, nay là nguồn lỗi cụt đoạn lớn nhất còn lại:
+   `_looks_like_table_block` (a) bỏ sót bảng có khối < 4 dòng — hàng bảng lọt ra thành khối văn xuôi
+   thường và bị gộp như văn xuôi, (b) cắt bảng theo **dòng** thay vì theo **ô**. Cân nhắc dùng
+   `page.find_tables()` của PyMuPDF thay cho heuristic hiện tại.
 2. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
 3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song — cần
    thiết hơn khi deploy thật vì host free ngủ giữa chừng làm job dừng (bấm **Resume** dịch tiếp

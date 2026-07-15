@@ -23,6 +23,28 @@ _FLAG_BOLD = 1 << 4
 _IMAGE_SKIP_OVERLAP_RATIO = 0.5
 _TABLE_ROW_TOLERANCE = 2.0
 
+# Khối rộng >= 72% bề ngang trang thì coi là chạy ngang cả trang (tiêu đề, hình, bảng lớn)
+# và cắt mạch đọc 2 cột. Đo trên sách y khoa 2 cột (594pt): cột đơn ~266pt, khối ngang ~524pt
+# — khoảng cách rất rộng nên ngưỡng này không nhạy cảm.
+_SPAN_WIDTH_RATIO = 0.72
+COLUMN_LEFT = 0
+COLUMN_RIGHT = 1
+COLUMN_SPAN = 2
+
+# Header/footer chạy trang nhận diện bằng CHỮ LẶP LẠI, không bằng ngưỡng lề và cũng không
+# bằng vị trí lặp lại. Đo trên sách thật: header nằm y0=33.0 còn thân bài bắt đầu y0≈57 —
+# cách nhau 8pt nên ngưỡng lề cố định nuốt nhầm thân bài; mà chỉ xét "cùng y0 trên nhiều
+# trang" cũng sai nốt, vì đỉnh thân bài đương nhiên lặp lại y0 ở mọi trang (đo được: băng
+# y0≈58 trúng 10/15 trang toàn là thân bài). Thứ chỉ header mới có là CHỮ lặp lại sau khi bỏ
+# số trang ('… Textbook of Assisted Reproductive Techniques'), nên băng nào chứa chữ lặp thì
+# cả băng đó là header/footer.
+_FURNITURE_Y_TOLERANCE = 2.0
+_FURNITURE_MARGIN_RATIO = 0.15
+_FURNITURE_MIN_PAGES = 3
+# Không có thân bài nào chạy xuống 5% cuối trang (đo được: đáy thân bài y1=743, footer
+# y1=773 trên trang cao 792) — nên footer chỉ có ở vài trang (mở chương) vẫn bắt được.
+_FOOTER_MARGIN_RATIO = 0.95
+
 
 @dataclass
 class TextSegment:
@@ -33,7 +55,24 @@ class TextSegment:
     font_size: float
     color: int = 0
     is_bold: bool = False
+    #: Cỡ chữ của phần THÂN khối (nhiều chữ nhất), khác `font_size` vốn lấy max để làm cận
+    #: trên cho Fitter. Chỉ một span lớn lọt vào (ký hiệu tham chiếu, chỉ số trên) là đủ kéo
+    #: `font_size` lên và làm hai mảnh của cùng một đoạn trông như khác kiểu chữ.
+    dominant_font_size: float = 0.0
     block_id: str = ""  # id ổn định để chèn lại + ánh xạ cache
+    page_height: float = 0.0
+    column: int = COLUMN_SPAN
+    #: False = dòng bảng: đứng độc lập theo ô/hàng nên không gộp được với khối kề, và còn
+    #: CẮT mạch đọc (một dòng bảng chen giữa hai đoạn văn nghĩa là chúng không liền nhau).
+    mergeable: bool = True
+    #: True = header/footer chạy trang: không gộp, nhưng mạch đọc NHẢY QUA nó — nhờ vậy đoạn
+    #: cuối trang trước nối được với đầu trang sau. Cả hai cờ chỉ ảnh hưởng việc gộp ở
+    #: services/segment_merge.py; khối vẫn được dịch và chèn lại bình thường.
+    is_furniture: bool = False
+
+    def __post_init__(self):
+        if self.dominant_font_size <= 0:
+            self.dominant_font_size = self.font_size
 
 
 def collect_segments(doc) -> list[TextSegment]:
@@ -74,6 +113,10 @@ def collect_segments(doc) -> list[TextSegment]:
                             [line],
                             text,
                             f"p{page_index}_b{block_index}_l{line_index}",
+                            page.rect.height,
+                            # Dòng bảng đứng độc lập theo ô/hàng — gộp với dòng kề sẽ trộn
+                            # nội dung giữa các ô.
+                            mergeable=False,
                         )
                     )
                 continue
@@ -95,14 +138,13 @@ def collect_segments(doc) -> list[TextSegment]:
                     lines,
                     text,
                     f"p{page_index}_b{block_index}",
+                    page.rect.height,
                 )
             )
 
-        page_segments.sort(
-            key=lambda seg: _reading_order_key(seg, page.rect.width, page.rect.height)
-        )
-        segments.extend(page_segments)
+        segments.extend(_order_page_segments(page_segments, page.rect.width))
 
+    _mark_page_furniture(segments, doc.page_count)
     return segments
 
 
@@ -112,9 +154,12 @@ def _segment_from_lines(
     lines: list[dict],
     text: str,
     block_id: str,
+    page_height: float,
+    mergeable: bool = True,
 ) -> TextSegment:
     sizes: list[float] = []
     color_weights: dict[int, int] = {}
+    size_weights: dict[float, int] = {}
     bold_votes = 0
     span_count = 0
 
@@ -123,7 +168,9 @@ def _segment_from_lines(
             span_text = span.get("text", "")
             if not span_text:
                 continue
-            sizes.append(span.get("size", 0.0))
+            size = span.get("size", 0.0)
+            sizes.append(size)
+            size_weights[round(size, 1)] = size_weights.get(round(size, 1), 0) + len(span_text)
             color = span.get("color", 0)
             color_weights[color] = color_weights.get(color, 0) + len(span_text)
             span_count += 1
@@ -135,9 +182,14 @@ def _segment_from_lines(
         bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
         text=text,
         font_size=max(sizes) if sizes else 10.0,
+        dominant_font_size=(
+            max(size_weights, key=size_weights.get) if size_weights else 10.0
+        ),
         color=max(color_weights, key=color_weights.get) if color_weights else 0,
         is_bold=span_count > 0 and bold_votes * 2 >= span_count,
         block_id=block_id,
+        page_height=page_height,
+        mergeable=mergeable,
     )
 
 
@@ -203,20 +255,98 @@ def _overlaps_image(rect: "fitz.Rect", image_rects: list["fitz.Rect"]) -> bool:
     return False
 
 
-def _reading_order_key(seg: TextSegment, page_width: float, page_height: float):
-    x0, y0, x1, _ = seg.bbox
-    width = x1 - x0
-    center_x = (x0 + x1) / 2
-    is_full_width = width >= page_width * 0.72
-    if y0 < page_height * 0.22:
-        column = -1
-    elif y0 > page_height * 0.92:
-        column = 3
-    elif is_full_width:
-        column = 2
-    else:
-        column = 0 if center_x < page_width / 2 else 1
-    return (column, y0, x0)
+def _order_page_segments(page_segments: list[TextSegment], page_width: float) -> list[TextSegment]:
+    """Sắp các khối theo đúng thứ tự đọc của trang 2 cột, và gắn `column` cho từng khối.
+
+    Chia trang thành các *băng* ngăn bởi khối chạy ngang cả trang (tiêu đề mục, hình, bảng
+    lớn): trong mỗi băng đọc hết cột trái rồi tới cột phải; gặp khối chạy ngang thì chốt băng
+    hiện tại, xuất khối đó, rồi mở băng mới.
+
+    Thứ tự đọc KHÔNG ảnh hưởng bố cục file ra (bản dịch luôn được chèn lại đúng bbox theo
+    block_id) — nó quyết định việc gộp mảnh câu ở `services/segment_merge.py` nhận đúng đoạn
+    liền trước hay không.
+    """
+    for seg in page_segments:
+        seg.column = _classify_column(seg, page_width)
+
+    ordered: list[TextSegment] = []
+    band: list[TextSegment] = []
+    for seg in sorted(page_segments, key=_position_key):
+        if seg.column == COLUMN_SPAN:
+            ordered.extend(_order_band(band))
+            band = []
+            ordered.append(seg)
+        else:
+            band.append(seg)
+    ordered.extend(_order_band(band))
+    return ordered
+
+
+def _order_band(band: list[TextSegment]) -> list[TextSegment]:
+    left = sorted((s for s in band if s.column == COLUMN_LEFT), key=_position_key)
+    right = sorted((s for s in band if s.column == COLUMN_RIGHT), key=_position_key)
+    return left + right
+
+
+def _position_key(seg: TextSegment):
+    return (seg.bbox[1], seg.bbox[0])
+
+
+def _classify_column(seg: TextSegment, page_width: float) -> int:
+    x0, _, x1, _ = seg.bbox
+    if x1 - x0 >= page_width * _SPAN_WIDTH_RATIO:
+        return COLUMN_SPAN
+    # Phân cột theo TÂM khối, không theo việc có cắt qua tâm trang hay không: đo trên sách
+    # thật, cột trái chạy tới x=302 còn cột phải bắt đầu x=294, tức hai cột đều lấn qua tâm
+    # trang (297) vài pt.
+    return COLUMN_LEFT if (x0 + x1) / 2 < page_width / 2 else COLUMN_RIGHT
+
+
+def _mark_page_furniture(segments: list[TextSegment], page_count: int) -> None:
+    """Đánh dấu header/footer chạy trang, để việc gộp mảnh câu nhảy qua chúng.
+
+    Cần cờ này vì header đứng ngay TRƯỚC khối thân bài đầu trang trong thứ tự đọc, còn footer
+    thì chen vào giữa đáy cột trái và đỉnh cột phải (nó nằm trong cột trái, dưới cùng) — cả
+    hai đều cắt đứt mạch nối của một câu chảy tràn sang cột/trang kế.
+    """
+    for seg in segments:
+        if seg.page_height > 0 and seg.bbox[3] > seg.page_height * _FOOTER_MARGIN_RATIO:
+            seg.is_furniture = True
+
+    if page_count < _FURNITURE_MIN_PAGES:
+        return
+
+    pages_per_text: dict[tuple[int, str], set[int]] = {}
+    for seg in segments:
+        if not _in_page_margin(seg):
+            continue
+        key = (_furniture_band(seg), _normalized_furniture_text(seg.text))
+        pages_per_text.setdefault(key, set()).add(seg.page_index)
+
+    furniture_bands = {
+        band for (band, _), pages in pages_per_text.items() if len(pages) >= _FURNITURE_MIN_PAGES
+    }
+    for seg in segments:
+        if _in_page_margin(seg) and _furniture_band(seg) in furniture_bands:
+            seg.is_furniture = True
+
+
+def _normalized_furniture_text(text: str) -> str:
+    """Bỏ số trang để header hai trang đối diện quy về cùng một chuỗi."""
+    return re.sub(r"\s+", " ", re.sub(r"\d+", "", text)).strip().lower()
+
+
+def _in_page_margin(seg: TextSegment) -> bool:
+    if seg.page_height <= 0:
+        return False
+    return (
+        seg.bbox[1] < seg.page_height * _FURNITURE_MARGIN_RATIO
+        or seg.bbox[3] > seg.page_height * (1 - _FURNITURE_MARGIN_RATIO)
+    )
+
+
+def _furniture_band(seg: TextSegment) -> int:
+    return round(seg.bbox[1] / _FURNITURE_Y_TOLERANCE)
 
 
 class Fitter:

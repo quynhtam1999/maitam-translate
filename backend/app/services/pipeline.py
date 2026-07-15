@@ -18,6 +18,7 @@ from . import storage
 from .cache import SegmentCache
 from .glossary import load_glossary_bytes
 from .pdf_overlay import collect_segments, overlay_translate
+from .segment_merge import build_translation_units
 from .translator import Translator
 
 try:
@@ -64,11 +65,14 @@ async def translate_pdf(
         # tại đến khi khối này thoát, nên phải mở/dịch/lưu xong (doc.close()) trước đó.
         with storage.local_copy(input_key) as tmp_in:
             doc = fitz.open(str(tmp_in))
-            segments = collect_segments(doc)  # TODO: đã stub
+            segments = collect_segments(doc)
+            # Gộp các mảnh câu bị cắt ngang ở biên khối/cột/trang trước khi dịch; bản dịch
+            # được cắt trả về đúng từng bbox trong translate_units.
+            units = build_translation_units(segments)
 
             # Giai đoạn 2: dịch — cập nhật tiến độ theo từng batch (real-time).
             progress.phase = "translating"
-            progress.segments_total = _count_unique_segment_texts(segments)
+            progress.segments_total = _count_unique_unit_texts(units)
             progress.pages_total = doc.page_count
             job_store.update_job(job_id, progress=progress)
 
@@ -78,8 +82,8 @@ async def translate_pdf(
                 progress.segments_translated = done
                 job_store.update_job(job_id, progress=progress)
 
-            translations = await translator.translate_segments(
-                segments,
+            translations = await translator.translate_units(
+                units,
                 target_lang=target_lang,
                 on_progress=on_progress,
                 api_key=api_key,
@@ -91,7 +95,7 @@ async def translate_pdf(
             progress.segments_translated = progress.segments_total
             job_store.update_job(job_id, progress=progress)
 
-            overlay_translate(doc, segments, translations)  # TODO: đã stub
+            overlay_translate(doc, segments, translations)
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_out_file:
                 tmp_out_path = Path(tmp_out_file.name)
             doc.save(str(tmp_out_path))
@@ -113,5 +117,5 @@ async def translate_pdf(
         job_store.update_job(job_id, status=JobStatus.FAILED, error=str(e))
 
 
-def _count_unique_segment_texts(segments) -> int:
-    return len({seg.text for seg in segments if seg.text.strip()})
+def _count_unique_unit_texts(units) -> int:
+    return len({unit.text for unit in units if unit.text.strip()})

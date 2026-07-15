@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from ..models.glossary import GlossaryEntry
 from .cache import SegmentCache
 from .glossary import apply_glossary_post, apply_glossary_pre
-from .pdf_overlay import TextSegment
+from .segment_merge import TranslationUnit, distribute_translation
 from ..providers.base import BaseProvider, ProviderBatchError, ProviderQuotaError
 from ..providers.quota_tracker import quota_tracker
 
@@ -95,9 +95,9 @@ class Translator:
         self.cache.set(text, target_lang, final, provider_used=self.provider.name)
         return final
 
-    async def translate_segments(
+    async def translate_units(
         self,
-        segments: list[TextSegment],
+        units: list[TranslationUnit],
         target_lang: str = "vi",
         on_progress=None,
         api_key: str | None = None,
@@ -105,14 +105,17 @@ class Translator:
     ) -> dict[str, str]:
         """Trả về ánh xạ block_id -> bản dịch.
 
-        Khử trùng lặp theo nội dung (nhiều block cùng chữ chỉ dịch 1 lần), ưu tiên cache,
+        Đơn vị dịch là câu ĐÃ GỘP (xem segment_merge), không phải từng bbox — nên cache được
+        đánh theo chữ đã gộp, và bản dịch được cắt trả về từng bbox ở cuối hàm.
+
+        Khử trùng lặp theo nội dung (nhiều đơn vị cùng chữ chỉ dịch 1 lần), ưu tiên cache,
         gọi provider cho phần thiếu, ghi cache ngay. `on_progress(done, total)` gọi sau mỗi đoạn.
         """
         # gom các đoạn text duy nhất
         unique_texts: dict[str, None] = {}
-        for seg in segments:
-            if seg.text.strip():
-                unique_texts.setdefault(seg.text, None)
+        for unit in units:
+            if unit.text.strip():
+                unique_texts.setdefault(unit.text, None)
 
         text_to_translation: dict[str, str] = {}
         pending: list[_PendingTranslation] = []
@@ -150,7 +153,12 @@ class Translator:
             if on_progress:
                 on_progress(done, total)
 
-        return {seg.block_id: text_to_translation.get(seg.text, seg.text) for seg in segments}
+        translations: dict[str, str] = {}
+        for unit in units:
+            # Thiếu bản dịch (đơn vị rỗng) -> giữ nguyên chữ gốc, như hành vi cũ.
+            translated = text_to_translation.get(unit.text, unit.text)
+            translations.update(distribute_translation(unit, translated))
+        return translations
 
     async def _translate_batch_with_split(
         self,
