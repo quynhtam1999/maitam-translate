@@ -22,6 +22,7 @@ from sqlalchemy import (
     event,
 )
 from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 
 metadata = MetaData()
@@ -101,7 +102,12 @@ def init(url: str) -> Engine:
     connect_args: dict = {}
     if is_sqlite:
         connect_args["check_same_thread"] = False
-        kwargs["poolclass"] = StaticPool
+        # StaticPool chỉ an toàn/cần thiết cho SQLite in-memory. Với file SQLite,
+        # một connection dùng chung giữa web thread và worker dịch có thể làm hai
+        # transaction giẫm lên nhau; để SQLAlchemy dùng QueuePool mặc định.
+        database = make_url(url).database
+        if not database or database == ":memory:":
+            kwargs["poolclass"] = StaticPool
     engine = create_engine(url, connect_args=connect_args, **kwargs)
     if is_sqlite:
         @event.listens_for(engine, "connect")

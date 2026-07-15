@@ -1,6 +1,6 @@
 """Entrypoint chạy nền cho một job dịch PDF.
 
-Bản scaffold dùng FastAPI BackgroundTasks (đủ cho 1 tiến trình, xử lý tuần tự).
+Pipeline tự đưa các bước đồng bộ nặng sang worker thread để không chặn web server.
 TODO: khi cần chạy song song / bền hơn, chuyển sang hàng đợi thật (arq / Celery / RQ).
 """
 from .pipeline import translate_pdf

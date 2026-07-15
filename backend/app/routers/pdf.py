@@ -1,4 +1,5 @@
 """PDF translation job endpoints."""
+import asyncio
 from pathlib import Path
 from urllib.parse import quote
 
@@ -103,7 +104,8 @@ async def create_pdf_job(
 
     input_key = f"uploads/{current_user['id']}/{job_id}.pdf"
     output_key = f"outputs/{current_user['id']}/{job_id}_vi.pdf"
-    storage.put_bytes(input_key, await file.read())
+    file_bytes = await file.read()
+    await asyncio.to_thread(storage.put_bytes, input_key, file_bytes)
 
     job_store.set_job_paths(job_id, current_user["id"], input_key, output_key)
 
@@ -172,7 +174,7 @@ async def download_pdf_job(job_id: str, current_user: CurrentUser):
     if job["status"] != JobStatus.DONE.value:
         raise HTTPException(status_code=409, detail="Job chưa hoàn tất")
 
-    data = storage.get_bytes(job["output_path"])
+    data = await asyncio.to_thread(storage.get_bytes, job["output_path"])
     if data is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy file kết quả")
 

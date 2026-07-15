@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AdminModal from "./components/AdminModal.jsx";
 import AuthPage from "./components/AuthPage.jsx";
 import ChangePasswordModal from "./components/ChangePasswordModal.jsx";
@@ -22,21 +22,38 @@ export default function App() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [providersVersion, setProvidersVersion] = useState(0);
+  const pollingControllerRef = useRef(null);
 
   useEffect(() => {
     getMe()
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setAuthLoading(false));
+    return () => pollingControllerRef.current?.abort();
   }, []);
 
   const runPolling = (jobId) => {
-    pollJobUntilDone(jobId, (s) => setJobStatus(s))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    pollingControllerRef.current?.abort();
+    const controller = new AbortController();
+    pollingControllerRef.current = controller;
+    setError(null);
+    pollJobUntilDone(jobId, (s) => setJobStatus(s), 2000, controller.signal)
+      .catch((err) => {
+        if (err.name !== "AbortError" && pollingControllerRef.current === controller) {
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (pollingControllerRef.current === controller) {
+          pollingControllerRef.current = null;
+          setLoading(false);
+        }
+      });
   };
 
   const handleSubmit = async (file, provider, opts) => {
+    pollingControllerRef.current?.abort();
+    pollingControllerRef.current = null;
     setLoading(true);
     setError(null);
     setJobStatus(null);
@@ -57,8 +74,11 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    pollingControllerRef.current?.abort();
+    pollingControllerRef.current = null;
     await logout().catch(() => {});
     setUser(null);
+    setLoading(false);
     setJobStatus(null);
     setError(null);
     setSettingsOpen(false);

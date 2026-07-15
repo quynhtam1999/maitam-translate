@@ -9,7 +9,7 @@ Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **ti
 giữ bố cục dùng **overlay PyMuPDF** (xóa chữ gốc tại chỗ + chèn bản dịch đè lên, tự co
 cỡ chữ cho vừa).
 
-## Trạng thái hiện tại (cập nhật 2026-07-04)
+## Trạng thái hiện tại (cập nhật 2026-07-15)
 
 ✅ **Tính năng chính đã có**
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
@@ -56,7 +56,8 @@ cỡ chữ cho vừa).
   zero-setup, `start.bat` giữ nguyên) khi `DATABASE_URL` trống, và **Postgres (Neon)** khi đặt
   `DATABASE_URL` — gộp 3 DB cũ (`auth.db`/`jobs.db`/`segments.db`) thành 5 bảng
   (`users`, `user_api_keys`, `sessions`, `jobs`, `segment_cache`) trong một engine dùng chung
-  (`core/db.py`).
+  (`core/db.py`). SQLite file-backed dùng `QueuePool` để web thread và worker dịch có connection
+  riêng; `StaticPool` chỉ giữ cho SQLite in-memory trong test.
 - Tầng file (PDF gốc/đã dịch + glossary) qua **object storage abstraction**
   (`services/storage.py`): `LocalStorage` ghi xuống `storage/` như cũ khi `S3_BUCKET` trống,
   `S3Storage` (boto3, S3-compatible: Cloudflare R2 / Supabase Storage / Backblaze B2) khi đặt
@@ -65,6 +66,21 @@ cỡ chữ cho vừa).
 - Nhờ vậy app **stateless** trên host free có filesystem ephemeral (Render Free, Fly, Koyeb, HF
   Spaces…): restart/ngủ dậy không mất tài khoản, API key, cache bản dịch hay file PDF. Không cần
   Persistent Disk trả phí. Xem biến môi trường ở mục **Deploy** bên dưới.
+
+✅ **Chống lỗi 502 khi deploy Vercel → Render (2026-07-15)**
+- Ca thật sau khi gộp câu: job Gemini 20 trang đã hoàn tất **679/679 đơn vị**, `status="done"`,
+  `error=null`, nhưng frontend từng báo `Lỗi 502`. Đây **không phải lỗi provider**: `done` chỉ được
+  ghi sau khi dựng PDF và upload file kết quả thành công; 502 phát sinh ở lớp proxy/poll status.
+- Điểm nghẽn phù hợp nhất với ca lỗi là `BackgroundTasks` await pipeline async trên event loop web,
+  trong khi PyMuPDF, boto3 và SQLAlchemy là đồng bộ; chưa có Vercel/Render timing log để khẳng định
+  đây là nguyên nhân production duy nhất của 502. Các pha tải glossary/PDF từ storage, bóc cấu trúc,
+  dịch + đọc/ghi cache, dựng PDF và upload/download nay chạy qua worker thread; endpoint poll vẫn
+  phản hồi trong lúc job nặng đang chạy. SQLite in-memory cố ý giữ cùng thread vì dùng một connection.
+- Frontend không còn dừng vĩnh viễn ở lỗi mạng/502 đầu tiên: `ApiError` giữ cả HTTP status và body;
+  poll chấp nhận body `JobStatus` hợp lệ của đúng job ngay cả khi proxy gắn 502, đồng thời retry
+  lỗi mạng/408/425/429/5xx tối đa 8 lần với exponential backoff (trần 15 giây).
+- Mỗi vòng poll có `AbortController` và identity guard: đổi job, đăng xuất hoặc unmount sẽ hủy
+  request/timer cũ, tránh poll cũ ghi đè trạng thái của phiên hay job mới.
 
 ✅ **Tối ưu RPD mới**
 - Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma 4 31B, Qwen; các field này ghi
@@ -139,6 +155,10 @@ cỡ chữ cho vừa).
 - **Dịch trọn `pedsinreview.2021005273.pdf`** (20 trang, 804 đoạn / 738 đoạn duy nhất) bằng
   **Gemini 3.1 Flash Lite**, cache rỗng để ép gọi API thật: **738/738 đoạn, 4 request, 124s**,
   xuất PDF 6,7 MB thành công. Lỗi `Provider không trả JSON hợp lệ` **không còn tái hiện**.
+- **Chạy lại sau khi có cơ chế gộp câu** bằng Gemini thật: job 20 trang hoàn tất **679/679 đơn vị**,
+  `status="done"`, `error=null`; đây là lần E2E API thật đầu tiên xác nhận luồng gộp → dịch → chia
+  bản dịch về bbox → dựng/upload PDF chạy hết pipeline. Lỗi 502 nhìn thấy ở frontend thuộc lớp
+  poll/proxy, không làm hỏng job hay file kết quả; code đã được gia cố nhưng vẫn cần retest production.
 - So chất lượng Gemini vs Qwen trên 14 đoạn mẫu (văn xuôi dài, bảng số, tiêu đề, mẩu cụt):
   cả hai đều trả **14/14 đoạn**, JSON hợp lệ. Cả hai đều có sai sót y khoa thật, không bên nào
   thắng tuyệt đối — xem mục *Chất lượng dịch* bên dưới.
@@ -148,17 +168,18 @@ cỡ chữ cho vừa).
   → tải PDF kết quả → xóa job/file qua `/api/settings/jobs/clear`.
 - Sanity test trực tiếp tầng DB/storage: init SQLite qua SQLAlchemy, đọc/ghi API key, cache segment,
   storage local và `job_store` đều pass.
-- `npm run build` trong `frontend/`: pass (API không đổi nên không cần sửa frontend).
+- Regression test chống 502: pipeline mở lại và dựng PDF hợp lệ; SQLite file dùng `QueuePool`;
+  event loop vẫn phản hồi trong lúc local-copy, dịch/cache và render giả lập đang block ở worker.
+- Test polling frontend: pass cả 3 ca **502 + body done**, 502 trống rồi retry thành công, và hủy
+  poll không còn callback muộn. `npm run build` trong `frontend/`: pass.
 
 ⚠️ **Chưa kiểm thử**
-- **Cơ chế gộp mảnh câu mới chỉ chạy E2E với provider GIẢ**, chưa gọi API thật. Đã verify trên cả 2
-  tài liệu: 100% block_id có bản dịch, mọi đơn vị gộp ghép lại từ các bbox đều khớp nguyên văn, xuất
-  PDF OK, số request không đổi, và so số bbox tràn với code cũ. Nhưng **chưa đo lại chất lượng dịch
-  thật** để biết việc gộp cải thiện được bao nhiêu — đó mới là mục đích của thay đổi này (xem *Chất
-  lượng dịch* ở trên).
-- Đã chạy E2E thật ở tầng backend (pipeline dịch + xuất PDF, API key thật), nhưng **chưa bấm qua
-  giao diện browser** và **chưa mở PDF kết quả để mắt người soi lại bố cục** sau dịch.
-- Chưa test thật với Postgres (Neon)/S3 (R2 hay tương đương) — chỉ verify SQLite + đĩa cục bộ.
+- Cơ chế gộp câu đã chạy hết pipeline với API thật, nhưng **chưa chấm lại chất lượng bản dịch** để đo
+  mức cải thiện so với bảng Gemini/Qwen cũ, và **chưa mở PDF kết quả để mắt người soi lại bố cục**.
+- Chưa kiểm thử có hệ thống toàn bộ luồng bằng browser sau bản sửa retry/cancel polling; mới có ca thật
+  tái hiện 502 trước khi sửa và regression test trực tiếp logic frontend.
+- Chưa chạy regression test có chủ đích với Postgres (Neon)/S3 sau đợt tách worker; bộ test tự động
+  hiện dùng SQLite file + đĩa cục bộ.
 - Gemma 4 31B chưa được đo trong đợt này (chỉ Gemini và Qwen).
 
 ### Thứ tự model & model mặc định
@@ -260,7 +281,9 @@ dính (batch 738 đoạn đứt ở 702/738). Đây là lý do giữ cơ chế c
 Dịch PDF chạy theo **mẫu job bất đồng bộ**: tạo job → poll trạng thái → tải file kết quả.
 Bản dịch được **cache theo nội dung đoạn và user** (SQLAlchemy Core — SQLite cục bộ hoặc Postgres
 khi deploy) nên hết quota/tắt máy vẫn **dịch tiếp** được (resume), kể cả khi đổi sang model khác,
-nhưng không dùng chung cache giữa các tài khoản.
+nhưng không dùng chung cache giữa các tài khoản. Job vẫn dùng FastAPI `BackgroundTasks`, nhưng các
+pha PDF/storage/provider/cache đồng bộ hoặc dài được đưa sang worker thread để không chặn event loop
+phục vụ auth, poll tiến trình và các request khác.
 
 ## Yêu cầu
 
@@ -314,6 +337,8 @@ uvicorn app.main:app --reload --port 8000
 >   trong Vercel Project Settings → Environment Variables, rồi redeploy.
 > - `BACKEND_CORS_ORIGINS`/`AUTH_COOKIE_SAMESITE` giữ mặc định (`lax`) là đủ vì trình duyệt giờ
 >   chỉ thấy request cùng domain Vercel; `AUTH_COOKIE_SECURE=true` vẫn nên bật vì Vercel luôn HTTPS.
+> - External rewrite của Vercel có timeout tối đa 120 giây. Backend không để các pha đồng bộ dài chặn
+>   event loop, còn frontend tự retry lỗi gateway tạm thời và vẫn nhận body job hợp lệ nếu proxy gắn 502.
 > - Render free tier tự ngủ sau ~15 phút không dùng — request đầu tiên qua proxy có thể chờ
 >   vài chục giây để backend khởi động lại, không liên quan tới cấu hình proxy.
 
@@ -336,7 +361,7 @@ backend/
 ├── .env.example
 └── app/
     ├── main.py                 # FastAPI app, CORS, health check, bootstrap admin, init db + storage
-    ├── core/                   # config.py, db.py (engine + schema dùng chung), job_store.py, auth.py (dependencies), auth_store.py (accounts/sessions/crypto)
+    ├── core/                   # config.py, db.py (engine + schema; QueuePool cho SQLite file/Postgres, StaticPool cho SQLite memory), job_store.py, auth.py, auth_store.py
     ├── models/                 # Pydantic: auth, job, translate, provider, glossary, settings
     ├── routers/                # auth, pdf, text, providers, glossary, settings (lớp HTTP)
     ├── services/               # pdf_overlay, segment_merge (gộp mảnh câu + cắt bản dịch về từng bbox), translator, pipeline, cache, glossary, job_runner, app_settings, user_data, storage (object storage abstraction)
@@ -429,9 +454,10 @@ Không có nút chuyển đổi runtime — engine/backend storage được ch�
    thường và bị gộp như văn xuôi, (b) cắt bảng theo **dòng** thay vì theo **ô**. Cân nhắc dùng
    `page.find_tables()` của PyMuPDF thay cho heuristic hiện tại.
 2. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
-3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song — cần
-   thiết hơn khi deploy thật vì host free ngủ giữa chừng làm job dừng (bấm **Resume** dịch tiếp
-   được nhờ cache Postgres, nhưng job không tự chạy lại).
+3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật để **kiểm soát concurrency** và
+   bền qua restart; các BackgroundTask của request riêng hiện đã có thể chồng lấp. Các pha nặng đã
+   chạy ngoài event loop nên không còn chặn poll, nhưng host free ngủ/restart giữa chừng vẫn làm job
+   dừng (bấm **Resume** dịch tiếp được nhờ cache Postgres, nhưng job không tự chạy lại).
 4. Quota admin chỉnh trong bảng **Quản trị** vẫn ghi vào `.env` (ephemeral trên host free) — khi
    deploy nên đặt quota qua env var lúc khởi tạo (`GEMINI_RPM_LIMIT`…) thay vì sửa runtime. Chuyển
    quota vào DB là follow-up tùy chọn.
