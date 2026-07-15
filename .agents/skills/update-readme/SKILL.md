@@ -1,13 +1,13 @@
 ---
 name: update-readme
-description: Cập nhật README.md của dự án Mai Tam Translate để phản ánh đúng tình trạng code hiện tại (xoá/sửa mọi nội dung đã cũ, không còn đúng), rồi tự động commit và push thẳng lên origin/main — không cần hỏi lại xác nhận. Dùng skill này bất cứ khi nào anh nói "cập nhật README", "đồng bộ README với code", "đẩy code lên git", "push lên main", "ghi lại tiến độ mới nhất", hoặc sau khi vừa hoàn thành một đợt thay đổi code đáng kể và muốn lưu lại + công bố lên GitHub.
+description: Cập nhật CLAUDE.md của dự án Mai Tam Translate để phản ánh đúng tình trạng code hiện tại (xoá/sửa mọi nội dung đã cũ, không còn đúng), rồi tự động commit và push thẳng lên origin/main — không cần hỏi lại xác nhận. CLAUDE.md là tài liệu dự án duy nhất (trước đây tên README.md, đã đổi tên ở commit 5a517ea) — repo KHÔNG còn file README.md nào. Dùng skill này bất cứ khi nào anh nói "cập nhật CLAUDE.md", "cập nhật README", "đồng bộ README với code", "đẩy code lên git", "push lên main", "ghi lại tiến độ mới nhất", hoặc sau khi vừa hoàn thành một đợt thay đổi code đáng kể và muốn lưu lại + công bố lên GitHub.
 ---
 
-# Cập nhật README + đẩy code lên Git
+# Cập nhật CLAUDE.md + đẩy code lên Git
 
-Skill này gói gọn một việc anh làm thường xuyên: sau khi code thay đổi, README.md
+Skill này gói gọn một việc anh làm thường xuyên: sau khi code thay đổi, CLAUDE.md
 bị lạc hậu so với thực tế — mô tả sai luồng, liệt kê thiếu file mới, giữ lại TODO
-đã xong. Việc của skill là đọc lại code + lịch sử git, viết lại README cho khớp
+đã xong. Việc của skill là đọc lại code + lịch sử git, viết lại CLAUDE.md cho khớp
 sự thật, rồi tự commit/push mà không cần hỏi lại (anh đã uỷ quyền việc này).
 
 ## Quy trình
@@ -20,14 +20,14 @@ sự thật, rồi tự commit/push mà không cần hỏi lại (anh đã uỷ 
 - `git diff` và `git diff --stat` (cả staged lẫn unstaged) — đổi cái gì, không chỉ đổi ở đâu.
 - `git log -15 --oneline` — vài commit gần nhất, để hiểu bối cảnh và bắt đúng văn
   phong commit message của repo (ngắn gọn, imperative, tập trung vào "vì sao" hơn "cái gì").
-- Đọc `README.md` hiện tại từ đầu đến cuối.
+- Đọc `CLAUDE.md` hiện tại từ đầu đến cuối.
 - Nếu thay đổi code không tự giải thích rõ (tên file không đủ nói lên bản chất),
-  đọc nhanh nội dung file đã đổi để hiểu đúng — README sai sự thật còn tệ hơn
-  README thiếu cập nhật.
+  đọc nhanh nội dung file đã đổi để hiểu đúng — CLAUDE.md sai sự thật còn tệ hơn
+  CLAUDE.md thiếu cập nhật.
 
-### 2. Xác định phần cần sửa trong README
+### 2. Xác định phần cần sửa trong CLAUDE.md
 
-So khớp từng phần của README với code thật, sửa mọi chỗ lệch:
+So khớp từng phần của CLAUDE.md với code thật, sửa mọi chỗ lệch:
 
 - **"Trạng thái hiện tại"** — cập nhật ngày, thêm tính năng/thay đổi mới, **xoá**
   câu mô tả hành vi không còn đúng (ví dụ: còn nhắc "có nút đăng ký" trong khi đã
@@ -41,21 +41,21 @@ So khớp từng phần của README với code thật, sửa mọi chỗ lệch
   mới nhất — sửa thẳng, đừng thêm ghi chú kiểu "(cập nhật: giờ không còn vậy nữa)"
   chồng lên đoạn cũ; viết lại cho gọn như thể đang mô tả trạng thái hiện tại từ đầu.
 
-**Nguyên tắc:** README phải phản ánh đúng những gì code *thực sự* đang làm, không
+**Nguyên tắc:** CLAUDE.md phải phản ánh đúng những gì code *thực sự* đang làm, không
 phải những gì dự định làm hay từng làm. Không thêm mục tính năng chưa có trong code.
 
-### 3. Viết lại README.md
+### 3. Viết lại CLAUDE.md
 
 - Toàn bộ nội dung bằng **tiếng Việt**, giữ đúng văn phong đã có trong file (cách
   dùng **in đậm**, ký hiệu ✅ 🔑 ⚠️, block `>` ghi chú, bảng markdown cho API...).
-- Sửa tối thiểu cần thiết để README đúng và gọn — không viết lại toàn bộ file nếu
+- Sửa tối thiểu cần thiết để CLAUDE.md đúng và gọn — không viết lại toàn bộ file nếu
   chỉ vài đoạn bị lạc hậu.
 - Không bịa thêm nội dung không có căn cứ từ code/git history.
 
 ### 4. Xem lại phạm vi thay đổi trước khi add
 
-- Chạy lại `git status --short` sau khi sửa README.
-- Chỉ add rõ từng file liên quan đến đợt việc này (README.md + các file code đã
+- Chạy lại `git status --short` sau khi sửa CLAUDE.md.
+- Chỉ add rõ từng file liên quan đến đợt việc này (CLAUDE.md + các file code đã
   thay đổi mà chưa được commit trước đó). **Không** dùng `git add -A` / `git add .`
   một cách mù quáng — tránh cuốn theo file rác, file tạm, hoặc file không liên quan.
 - **Không bao giờ** add/commit `backend/.env` hay bất kỳ file chứa secret nào (đã
@@ -76,9 +76,9 @@ Co-Authored-By: Codex Sonnet 5 <noreply@anthropic.com>
 
 Chủ repo (anh) đã xác nhận rõ ràng khi tạo skill này: **skill được phép chạy
 `git push origin main` trực tiếp, không cần hỏi xác nhận lại mỗi lần chạy.** Đây là
-uỷ quyền lâu dài cho riêng luồng "cập nhật README + push" của skill này trong dự
+uỷ quyền lâu dài cho riêng luồng "cập nhật CLAUDE.md + push" của skill này trong dự
 án Mai Tam Translate. Không hỏi kiểu "anh có muốn push không?" — cứ push sau khi
-commit xong, rồi báo lại kết quả (commit hash, tóm tắt README đã sửa gì).
+commit xong, rồi báo lại kết quả (commit hash, tóm tắt CLAUDE.md đã sửa gì).
 
 **Ngoại lệ duy nhất — dừng lại và hỏi anh trước khi push nếu:**
 - `git status` cho thấy có file lạ/nhiều thay đổi không liên quan gì đến bối cảnh
@@ -90,6 +90,6 @@ Uỷ quyền này chỉ áp dụng cho luồng bình thường; gặp rủi ro r
 
 ## Khi không có gì để làm
 
-Nếu README đã khớp hoàn toàn với code hiện tại và không có thay đổi nào chưa
+Nếu CLAUDE.md đã khớp hoàn toàn với code hiện tại và không có thay đổi nào chưa
 commit, báo lại cho anh là không có gì cần cập nhật — không tạo commit rỗng, không
 push vô ích.
