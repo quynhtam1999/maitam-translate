@@ -40,6 +40,23 @@ class ProviderQuotaError(Exception):
     """Ném ra khi provider báo hết quota / vượt RPM — pipeline sẽ đặt job = paused_quota."""
 
 
+class ProviderBatchError(RuntimeError):
+    """Batch hỏng nhưng CÓ THỂ cứu được bằng cách chia đôi và dịch lại.
+
+    Gồm: JSON cắt dở/không parse được, thiếu mảng translations, sai số lượng đoạn.
+    Translator bắt lỗi này để chia nhỏ batch — KHÁC với ProviderQuotaError (phải
+    dừng job) và các RuntimeError khác (lỗi cấu hình/API, chia nhỏ không giúp gì).
+    """
+
+
+class ProviderTruncatedError(ProviderBatchError):
+    """Phản hồi về KHÔNG đầy đủ: stream đứt ngang, vượt maxOutputTokens, hoặc bị chặn.
+
+    Tách riêng khỏi ProviderBatchError để phân biệt "dữ liệu về thiếu" với "dữ liệu về
+    đủ nhưng sai cấu trúc" — hai ca này có nguyên nhân và cách xử lý khác hẳn nhau.
+    """
+
+
 class BaseProvider(ABC):
     #: định danh nội bộ, vd "gemini" | "gemma" | "qwen"
     name: str = ""
@@ -109,11 +126,22 @@ def parse_batch_translations(raw_text: str, expected_count: int) -> list[str]:
         if start >= 0 and end > start:
             data = _load_json(raw[start : end + 1])
     if data is None:
-        raise RuntimeError("Provider không trả JSON hợp lệ cho batch dịch")
+        # JSON mở ngoặc nhưng không đóng => phản hồi bị cắt giữa chừng. Thường là do
+        # stream SSE đứt ngang (đo được: xảy ra rải rác, dữ liệu về một phần mà không
+        # báo lỗi), ít khi do vượt maxOutputTokens — trường hợp đó finishReason đã bắt.
+        if _looks_truncated(raw):
+            raise ProviderTruncatedError(
+                "Provider trả JSON bị cắt giữa chừng cho batch dịch "
+                f"(nhận {len(raw)} ký tự cho {expected_count} đoạn) — "
+                "phản hồi đứt giữa chừng, sẽ chia nhỏ batch và thử lại"
+            )
+        raise ProviderBatchError(
+            f"Provider không trả JSON hợp lệ cho batch dịch (đầu phản hồi: {raw[:200]!r})"
+        )
 
     items = data.get("translations") if isinstance(data, dict) else data
     if not isinstance(items, list):
-        raise RuntimeError("JSON batch dịch thiếu mảng translations")
+        raise ProviderBatchError("JSON batch dịch thiếu mảng translations")
 
     if all(isinstance(item, str) for item in items):
         texts = [item.strip() for item in items]
@@ -125,10 +153,10 @@ def parse_batch_translations(raw_text: str, expected_count: int) -> list[str]:
             indexed.append((int(item_id), str(text).strip()))
         texts = [text for _, text in sorted(indexed, key=lambda pair: pair[0])]
     else:
-        raise RuntimeError("JSON batch dịch có định dạng phần tử không hợp lệ")
+        raise ProviderBatchError("JSON batch dịch có định dạng phần tử không hợp lệ")
 
     if len(texts) != expected_count:
-        raise RuntimeError(
+        raise ProviderBatchError(
             f"Provider trả {len(texts)} bản dịch, nhưng batch cần {expected_count} đoạn"
         )
     return texts
@@ -139,6 +167,31 @@ def _load_json(text: str):
         return json.loads(text)
     except (TypeError, ValueError):
         return None
+
+
+def _looks_truncated(raw: str) -> bool:
+    """Phản hồi có mở ngoặc JSON nhưng chưa đóng hết -> bị cắt giữa chừng."""
+    if not raw:
+        return False
+    depth = 0
+    in_string = False
+    escaped = False
+    for ch in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+    return in_string or depth > 0
 
 
 def count_streamed_json_items(buffer: str) -> int:

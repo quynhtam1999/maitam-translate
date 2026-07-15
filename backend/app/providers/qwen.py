@@ -16,6 +16,7 @@ from .base import (
     BatchTranslationResult,
     ProgressCallback,
     ProviderQuotaError,
+    ProviderTruncatedError,
     RateLimits,
     TranslationResult,
     count_streamed_json_items,
@@ -26,6 +27,8 @@ from .prompt import build_batch_system_prompt, build_system_prompt
 _DEFAULT_API_KEY = "EMPTY"
 _DEFAULT_BASE_URL = "https://api-inference.modelscope.ai/v1"
 _DEFAULT_MODEL = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+#: finish_reason của endpoint OpenAI-compatible khi phản hồi bị cắt vì hết max_tokens.
+_TRUNCATING_FINISH_REASONS = {"length", "content_filter"}
 
 
 class QwenProvider(BaseProvider):
@@ -137,7 +140,9 @@ class QwenProvider(BaseProvider):
 
         # Cùng MỘT request; nếu có progress_cb thì bật stream để đếm số đoạn xong.
         if progress_cb is not None:
-            raw, usage = await _stream_chat_completions(url, headers, body, progress_cb)
+            raw, usage, finish_reason = await _stream_chat_completions(
+                url, headers, body, progress_cb
+            )
         else:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(url, headers=headers, json=body)
@@ -148,9 +153,11 @@ class QwenProvider(BaseProvider):
                 raise RuntimeError(f"Qwen API lỗi: {provider_error}")
             raw = _extract_response_text(data)
             usage = _extract_usage(data)
+            finish_reason = _extract_finish_reason(data)
 
         if not raw:
             raise RuntimeError("Qwen không trả về kết quả hợp lệ")
+        _raise_if_truncated(finish_reason, self.display_name)
 
         return BatchTranslationResult(
             texts=parse_batch_translations(raw, len(texts)),
@@ -200,10 +207,11 @@ def _resolve_connection(
 
 async def _stream_chat_completions(
     url: str, headers: dict, body: dict, progress_cb: ProgressCallback
-) -> tuple[str, dict[str, int]]:
+) -> tuple[str, dict[str, int], str | None]:
     """Stream chat/completions (SSE) và báo tiến trình theo số đoạn dịch xong.
 
     Cùng một request như bản không stream — chỉ thêm stream=true để nhận dần.
+    Trả kèm finish_reason để bên gọi phát hiện phản hồi bị cắt.
     """
     stream_body = dict(body)
     stream_body["stream"] = True
@@ -211,6 +219,7 @@ async def _stream_chat_completions(
 
     pieces: list[str] = []
     usage_raw: dict = {}
+    finish_reason: str | None = None
     async with httpx.AsyncClient(timeout=180.0) as client:
         async with client.stream("POST", url, headers=headers, json=stream_body) as resp:
             if resp.status_code >= 400:
@@ -233,6 +242,8 @@ async def _stream_chat_completions(
                     if piece:
                         pieces.append(piece)
                         progress_cb(count_streamed_json_items("".join(pieces)))
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
                 candidate = chunk.get("usage")
                 if isinstance(candidate, dict):
                     usage_raw = candidate
@@ -246,7 +257,21 @@ async def _stream_chat_completions(
             usage_raw, ("completion_tokens", "output_tokens", "completionTokens", "outputTokens")
         ),
     }
-    return raw, usage
+    return raw, usage, finish_reason
+
+
+def _extract_finish_reason(data: dict) -> str | None:
+    choices = data.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return None
+    return choices[0].get("finish_reason")
+
+
+def _raise_if_truncated(finish_reason: str | None, provider_label: str) -> None:
+    if finish_reason in _TRUNCATING_FINISH_REASONS:
+        raise ProviderTruncatedError(
+            f"{provider_label} cắt phản hồi giữa chừng (finish_reason={finish_reason})"
+        )
 
 
 def _raise_qwen_error_status(resp: httpx.Response) -> None:

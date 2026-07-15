@@ -11,6 +11,7 @@ from .base import (
     BatchTranslationResult,
     ProgressCallback,
     ProviderQuotaError,
+    ProviderTruncatedError,
     RateLimits,
     TranslationResult,
     count_streamed_json_items,
@@ -21,6 +22,35 @@ from .prompt import build_batch_system_prompt, build_system_prompt
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 _RETRY_DELAYS_SECONDS = (1.0, 3.0, 8.0)
 _TRANSIENT_STATUS_CODES = {500, 502, 503, 504}
+#: finishReason nghĩa là phản hồi DỪNG SỚM -> nội dung nhận được chỉ là một phần.
+#: Trước đây chỉ kiểm tra khi text rỗng, nên phản hồi cụt-nhưng-không-rỗng trôi thẳng
+#: xuống bước parse JSON và hiện ra dưới dạng lỗi "không trả JSON hợp lệ" khó hiểu.
+_TRUNCATING_FINISH_REASONS = {"MAX_TOKENS", "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT"}
+
+#: Ràng buộc cấu trúc đầu ra của batch dịch.
+#:
+#: responseMimeType="application/json" KHÔNG đủ: model vẫn sinh ra JSON sai cấu trúc
+#: (đo được: với đoạn bắt đầu bằng '<' như "<2 SD for age)a", model bỏ luôn khoá
+#: "text" -> {"id": 115, "<2 SD theo tuổi)a"}), làm hỏng cả batch dù finishReason=STOP
+#: và mới dùng 1/8 trần token. responseSchema ràng buộc bộ giải mã nên lỗi này không
+#: thể xảy ra: batch 200 đoạn hỏng 100% khi không có schema, đạt 200/200 khi có.
+_BATCH_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "translations": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "id": {"type": "INTEGER"},
+                    "text": {"type": "STRING"},
+                },
+                "required": ["id", "text"],
+            },
+        }
+    },
+    "required": ["translations"],
+}
 
 
 class GeminiProvider(BaseProvider):
@@ -120,6 +150,7 @@ class GeminiProvider(BaseProvider):
             "generationConfig": {
                 "temperature": 0.1,
                 "responseMimeType": "application/json",
+                "responseSchema": _BATCH_RESPONSE_SCHEMA,
             },
         }
         max_output_tokens = self.get_limits().max_output_tokens
@@ -152,7 +183,7 @@ class GeminiProvider(BaseProvider):
         Nếu stream trả về rỗng bất thường -> lùi về generateContent thường (1 request).
         """
         url = f"{_API_BASE}/{self.model}:streamGenerateContent"
-        raw, usage, resp = await _stream_generate_content(
+        raw, usage, resp, finish_reason = await _stream_generate_content(
             url, api_key, body, timeout=180.0, progress_cb=progress_cb
         )
         _raise_for_error(resp, self.display_name)
@@ -164,6 +195,10 @@ class GeminiProvider(BaseProvider):
             data = resp.json()
             raw = _extract_candidate_text(data, self.display_name)
             usage = data.get("usageMetadata", {})
+            return raw, usage
+        # Stream có dữ liệu nhưng dừng sớm -> JSON chắc chắn cụt, báo ngay thay vì
+        # để parse_batch_translations bung ra lỗi "không trả JSON hợp lệ" khó hiểu.
+        _raise_if_truncated(finish_reason, self.display_name)
         return raw, usage
 
 
@@ -173,18 +208,19 @@ async def _stream_generate_content(
     body: dict,
     timeout: float,
     progress_cb: ProgressCallback,
-) -> tuple[str, dict, httpx.Response]:
+) -> tuple[str, dict, httpx.Response, str | None]:
     """Stream SSE từ streamGenerateContent.
 
-    Trả về (text_đầy_đủ, usageMetadata, response). Gọi progress_cb theo số object
-    JSON đã đóng. Retry khi lỗi tạm thời/đứt kết nối lúc THIẾT LẬP stream (chưa nhận
-    dữ liệu) — không tăng request trong trường hợp thành công.
+    Trả về (text_đầy_đủ, usageMetadata, response, finishReason). Gọi progress_cb theo
+    số object JSON đã đóng. Retry khi lỗi tạm thời/đứt kết nối lúc THIẾT LẬP stream
+    (chưa nhận dữ liệu) — không tăng request trong trường hợp thành công.
     """
     params = {"key": api_key, "alt": "sse"}
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(len(_RETRY_DELAYS_SECONDS) + 1):
             pieces: list[str] = []
             usage: dict = {}
+            finish_reason: str | None = None
             try:
                 async with client.stream("POST", url, params=params, json=body) as resp:
                     if resp.status_code >= 400:
@@ -195,7 +231,7 @@ async def _stream_generate_content(
                         ):
                             await asyncio.sleep(_retry_delay_seconds(resp, attempt))
                             continue
-                        return "", {}, resp
+                        return "", {}, resp, None
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -215,7 +251,10 @@ async def _stream_generate_content(
                         meta = chunk.get("usageMetadata")
                         if isinstance(meta, dict):
                             usage = meta
-                    return "".join(pieces), usage, resp
+                        reason = _chunk_finish_reason(chunk)
+                        if reason:
+                            finish_reason = reason
+                    return "".join(pieces), usage, resp, finish_reason
             except httpx.TransportError as exc:
                 if attempt >= len(_RETRY_DELAYS_SECONDS):
                     raise RuntimeError(
@@ -232,6 +271,13 @@ def _chunk_text(chunk: dict) -> str:
         return ""
     parts = candidates[0].get("content", {}).get("parts", [])
     return "".join(str(p.get("text", "")) for p in parts if isinstance(p, dict))
+
+
+def _chunk_finish_reason(chunk: dict) -> str | None:
+    candidates = chunk.get("candidates") or []
+    if not candidates:
+        return None
+    return candidates[0].get("finishReason")
 
 
 async def _post_generate_content(
@@ -303,12 +349,22 @@ def _extract_candidate_text(data: dict, provider_label: str) -> str:
     candidate = candidates[0]
     parts = candidate.get("content", {}).get("parts", [])
     text = "".join(str(p.get("text", "")) for p in parts if isinstance(p, dict)).strip()
+    finish_reason = candidate.get("finishReason")
     if not text:
-        finish_reason = candidate.get("finishReason")
         raise RuntimeError(
             f"{provider_label} không trả về nội dung dịch (finishReason={finish_reason})"
         )
+    # Text KHÔNG rỗng nhưng vẫn có thể bị cắt dở: phải báo đúng bản chất, nếu không
+    # lỗi sẽ trôi xuống bước parse JSON và hiện ra dưới dạng "không trả JSON hợp lệ".
+    _raise_if_truncated(finish_reason, provider_label)
     return text
+
+
+def _raise_if_truncated(finish_reason: str | None, provider_label: str) -> None:
+    if finish_reason in _TRUNCATING_FINISH_REASONS:
+        raise ProviderTruncatedError(
+            f"{provider_label} cắt phản hồi giữa chừng (finishReason={finish_reason})"
+        )
 
 
 def _safe_json(resp: httpx.Response) -> dict | None:

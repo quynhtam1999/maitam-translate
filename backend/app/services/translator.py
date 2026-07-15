@@ -11,19 +11,24 @@ from ..models.glossary import GlossaryEntry
 from .cache import SegmentCache
 from .glossary import apply_glossary_post, apply_glossary_pre
 from .pdf_overlay import TextSegment
-from ..providers.base import BaseProvider, ProviderQuotaError
+from ..providers.base import BaseProvider, ProviderBatchError, ProviderQuotaError
 from ..providers.quota_tracker import quota_tracker
 
-# Trần số đoạn/batch chỉ là chặn an toàn. Việc gộp tối đa để GIẢM số request/ngày
-# (RPD) vẫn giữ nguyên — tiến trình real-time đến từ STREAM phản hồi (đếm số đoạn
-# đã dịch xong trong lúc nhận), KHÔNG phải từ việc chia nhỏ batch.
-_MAX_BATCH_ITEMS = 2000
+# Trần số đoạn/batch. KHÔNG phải vì trần token (batch cả tài liệu vẫn thừa chỗ token) —
+# mà vì stream SSE càng dài càng dễ đứt ngang: đo trên tài liệu 738 đoạn (2026-07-15),
+#   không trần -> 738 đoạn/1 request: đứt ở 702/738, chia đôi 2 lần, TỔNG 5 request/294s
+#   trần 200   -> 4 request/124s, không lần nào phải chia đôi
+# Tức trần 200 vừa ÍT request hơn (tốt cho RPD) vừa nhanh gấp đôi. Tiến trình real-time
+# vẫn đến từ STREAM phản hồi, không phải từ việc chia nhỏ batch.
+_MAX_BATCH_ITEMS = 200
 _INPUT_BATCH_HEADROOM = 0.8
 _OUTPUT_BATCH_HEADROOM = 0.9
 _SINGLE_PROMPT_TOKEN_OVERHEAD = 256
 _BATCH_PROMPT_TOKEN_OVERHEAD = 512
 _JSON_ITEM_TOKEN_OVERHEAD = 16
 _OUTPUT_ITEM_TOKEN_OVERHEAD = 16
+#: Đo trên tài liệu y khoa Anh->Việt: token đầu ra / token nguồn thật sự là 1.07-1.25
+#: (batch 100 đoạn: 7520 token ra / 4739 token nguồn). 1.3 là mức có đệm nhẹ.
 _OUTPUT_EXPANSION_FACTOR = 1.3
 
 
@@ -134,41 +139,78 @@ class Translator:
             )
 
         for batch in self._make_batches(pending):
-            originals = [item.original for item in batch]
-            prepared_texts = [item.prepared for item in batch]
-            estimated_tokens = _estimate_batch_total_tokens(batch)
+            translations = await self._translate_batch_with_split(
+                batch, target_lang, api_key, on_progress, done, total
+            )
+            for item, translated in zip(batch, translations, strict=True):
+                final = apply_glossary_post(translated, self.glossary)
+                self.cache.set(item.original, target_lang, final, provider_used=self.provider.name)
+                text_to_translation[item.original] = final
+                done += 1
+            if on_progress:
+                on_progress(done, total)
 
-            await self._wait_for_quota_window(estimated_tokens)
+        return {seg.block_id: text_to_translation.get(seg.text, seg.text) for seg in segments}
 
-            # Tiến trình real-time: provider stream phản hồi và gọi progress_cb với
-            # số đoạn đã dịch xong TRONG batch này (không tốn thêm request/RPD).
-            progress_cb = _make_batch_progress_cb(on_progress, done, len(batch), total)
+    async def _translate_batch_with_split(
+        self,
+        batch: list[_PendingTranslation],
+        target_lang: str,
+        api_key: str | None,
+        on_progress,
+        base_done: int,
+        total: int,
+    ) -> list[str]:
+        """Dịch một batch; nếu phản hồi hỏng thì CHIA ĐÔI và dịch lại từng nửa.
+
+        Phản hồi batch thỉnh thoảng hỏng vì lý do NGOÀI tầm kiểm soát của ta: đo thực
+        tế thấy stream SSE của Google đôi khi đứt giữa chừng (~10-15%), trả về một
+        phần dữ liệu mà KHÔNG báo lỗi và finishReason vẫn là STOP. Model cũng có thể
+        trả thiếu/thừa số đoạn. Chia đôi cho phép job tự cứu (chỉ tốn thêm request khi
+        thật sự hỏng) thay vì mất trắng cả tài liệu.
+
+        Xuống còn 1 đoạn mà vẫn lỗi thì đoạn đó có vấn đề thật -> ném lỗi ra ngoài.
+        """
+        estimated_tokens = _estimate_batch_total_tokens(batch)
+        await self._wait_for_quota_window(estimated_tokens)
+
+        # Tiến trình real-time: provider stream phản hồi và gọi progress_cb với
+        # số đoạn đã dịch xong TRONG batch này (không tốn thêm request/RPD).
+        progress_cb = _make_batch_progress_cb(on_progress, base_done, len(batch), total)
+        try:
             result = await self.provider.translate_batch(
-                prepared_texts,
+                [item.prepared for item in batch],
                 target_lang,
                 self.glossary,
                 api_key=api_key,
                 provider_options=self.provider_options,
                 progress_cb=progress_cb,
             )
-
-            input_tokens = result.input_tokens
-            output_tokens = result.output_tokens
-            if input_tokens + output_tokens <= 0:
-                input_tokens = estimated_tokens
+        except ProviderBatchError:
+            # Request hỏng vẫn TỐN quota thật -> phải ghi nhận, nếu không RPM/RPD bị
+            # đếm thiếu và ta sẽ gọi vượt giới hạn thật của provider.
             quota_tracker.record(
-                self.provider.name, input_tokens, output_tokens, scope=self.quota_scope
+                self.provider.name, estimated_tokens, 0, scope=self.quota_scope
             )
+            if len(batch) == 1:
+                raise
+            mid = len(batch) // 2
+            left = await self._translate_batch_with_split(
+                batch[:mid], target_lang, api_key, on_progress, base_done, total
+            )
+            right = await self._translate_batch_with_split(
+                batch[mid:], target_lang, api_key, on_progress, base_done + mid, total
+            )
+            return left + right
 
-            for original, translated in zip(originals, result.texts, strict=True):
-                final = apply_glossary_post(translated, self.glossary)
-                self.cache.set(original, target_lang, final, provider_used=self.provider.name)
-                text_to_translation[original] = final
-                done += 1
-            if on_progress:
-                on_progress(done, total)
-
-        return {seg.block_id: text_to_translation.get(seg.text, seg.text) for seg in segments}
+        input_tokens = result.input_tokens
+        output_tokens = result.output_tokens
+        if input_tokens + output_tokens <= 0:
+            input_tokens = estimated_tokens
+        quota_tracker.record(
+            self.provider.name, input_tokens, output_tokens, scope=self.quota_scope
+        )
+        return result.texts
 
     def _make_batches(self, pending: list[_PendingTranslation]) -> list[list[_PendingTranslation]]:
         limits = self.provider.get_limits()

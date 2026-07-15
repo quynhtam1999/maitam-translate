@@ -69,15 +69,33 @@ cỡ chữ cho vừa).
 ✅ **Tối ưu RPD mới**
 - Admin chỉnh được RPM/TPM/RPD và **Max token/request** cho Gemini, Gemma 4 31B, Qwen; các field này ghi
   vào `.env` và user thường chỉ xem được.
-- Dịch PDF gom batch lớn nhất có thể theo ngân sách input `TPM × 0.8` và ngân sách output
-  `Max token/request × 0.9`; không còn trần cứng 200 đoạn/request hoặc 200.000 token/request.
+- Dịch PDF gom batch lớn theo ngân sách input `TPM × 0.8` và ngân sách output
+  `Max token/request × 0.9`, **trần 200 đoạn/request** (`_MAX_BATCH_ITEMS`).
+  > Trần 200 từng bị bỏ, nay đặt lại sau khi **đo thật** (2026-07-15) — lý do là **độ ổn định của
+  > stream**, không phải trần token: tài liệu 738 đoạn gom vào 1 request thì stream đứt ở 702/738,
+  > phải chia đôi 2 lần → **5 request / 294s**; để trần 200 → **4 request / 124s**, không lần nào
+  > phải chia. Trần 200 vừa tiết kiệm RPD hơn vừa nhanh gấp đôi.
 - Provider set giới hạn đầu ra khi gọi API (`generationConfig.maxOutputTokens` cho Gemini/Gemma 4 31B,
   `max_tokens` cho Qwen), giúp batch lớn ít bị cắt cụt JSON hơn.
+- Gemini/Gemma gửi kèm **`generationConfig.responseSchema`** để ràng buộc cấu trúc JSON batch dịch
+  (xem `_BATCH_RESPONSE_SCHEMA` trong `providers/gemini.py`). **Bắt buộc, không phải tối ưu**: chỉ đặt
+  `responseMimeType="application/json"` và dặn trong prompt là KHÔNG đủ — xem mục *Bài học* bên dưới.
 - Dịch PDF **stream** phản hồi provider (SSE) để cập nhật tiến trình theo từng đoạn dịch xong ngay trong
   lúc nhận — **vẫn đúng 1 request cho mỗi batch**, không đánh đổi RPD để lấy thanh tiến trình real-time.
 - Dịch văn bản dán tay vẫn giữ 1 request/lần gửi nhưng cũng hưởng lợi từ giới hạn output mới.
+- **Batch hỏng thì tự chia đôi và dịch lại** (`_translate_batch_with_split` trong
+  `services/translator.py`): bắt `ProviderBatchError` (JSON cụt / thiếu mảng / sai số đoạn), chia
+  đôi đệ quy tới khi còn 1 đoạn. Chỉ tốn thêm request **khi thật sự hỏng**; job tự cứu thay vì mất
+  trắng cả tài liệu. Request hỏng vẫn được `quota_tracker.record()` vì nó **đã tiêu quota thật** —
+  không ghi thì RPM/RPD bị đếm thiếu.
 
-✅ **Kiểm tra gần nhất**
+✅ **Kiểm tra gần nhất (2026-07-15) — E2E THẬT với API key thật**
+- **Dịch trọn `pedsinreview.2021005273.pdf`** (20 trang, 804 đoạn / 738 đoạn duy nhất) bằng
+  **Gemini 3.1 Flash Lite**, cache rỗng để ép gọi API thật: **738/738 đoạn, 4 request, 124s**,
+  xuất PDF 6,7 MB thành công. Lỗi `Provider không trả JSON hợp lệ` **không còn tái hiện**.
+- So chất lượng Gemini vs Qwen trên 14 đoạn mẫu (văn xuôi dài, bảng số, tiêu đề, mẩu cụt):
+  cả hai đều trả **14/14 đoạn**, JSON hợp lệ. Cả hai đều có sai sót y khoa thật, không bên nào
+  thắng tuyệt đối — xem mục *Chất lượng dịch* bên dưới.
 - `python -m compileall backend/app`: pass. Import `app.main` thành công (11 route).
 - Sanity test FastAPI bằng `TestClient` (SQLite + đĩa cục bộ, storage tạm cô lập): bootstrap admin
   → login → lưu API key (mã hóa AES-GCM, masked đúng) → upload/đọc glossary CSV → tạo job PDF tối giản
@@ -86,10 +104,25 @@ cỡ chữ cho vừa).
   storage local và `job_store` đều pass.
 - `npm run build` trong `frontend/`: pass (API không đổi nên không cần sửa frontend).
 
-⚠️ **Chưa kiểm thử lại trong lượt cập nhật này**
-- Chưa chạy full E2E qua giao diện thật (browser) với API key thật của một provider — lượt này
-  test qua `TestClient`/API local để xác nhận tầng DB/storage, chưa xác nhận lại bố cục PDF sau dịch.
+⚠️ **Chưa kiểm thử**
+- Đã chạy E2E thật ở tầng backend (pipeline dịch + xuất PDF, API key thật), nhưng **chưa bấm qua
+  giao diện browser** và **chưa mở PDF kết quả để mắt người soi lại bố cục** sau dịch.
 - Chưa test thật với Postgres (Neon)/S3 (R2 hay tương đương) — chỉ verify SQLite + đĩa cục bộ.
+- Gemma 4 31B chưa được đo trong đợt này (chỉ Gemini và Qwen).
+
+### Thứ tự model & model mặc định
+
+Thứ tự khai báo trong `_PROVIDERS` (`providers/registry.py`) quyết định thứ tự hiển thị, và
+frontend (`FileUpload.jsx`, `TextTranslate.jsx`) tự chọn **model dùng được đầu tiên** làm mặc
+định. Thứ tự hiện tại:
+
+1. **Gemini 3.1 Flash Lite** (`gemini-3.1-flash-lite`) — mặc định
+2. **Qwen3 235B** (ModelScope)
+3. **Gemma 4 31B** (`gemma-4-31b-it`)
+
+> ⚠️ Tên model Gemini phải đúng chính xác: **`gemini-3.1-flash-lite`**. Không có model tên
+> `gemini-3.1-flash` — gọi tên đó API trả **404**. Danh sách model thật của key xem bằng
+> `GET https://generativelanguage.googleapis.com/v1beta/models?key=...`.
 
 ### Model Qwen đang dùng
 Mặc định `Qwen/Qwen3-235B-A22B-Instruct-2507` qua **ModelScope API-Inference** (server quốc tế
@@ -108,12 +141,63 @@ mình** trong ⚙ Cài đặt thì mới dịch được — không có key dùn
 - **RPD** (requests per day): khi đạt giới hạn ngày của model/key hiện tại, job ngưng ở trạng
   thái `paused_quota` và báo rõ đã hết giới hạn ngày; người dùng có thể chờ reset ngày hoặc
   đổi model/API key để dịch tiếp nhờ cache đoạn đã dịch.
-- Khi dịch PDF, backend gom nhiều đoạn chưa có cache vào batch lớn nhất có thể theo **TPM do admin đặt**
-  và **Max token/request** của từng model. TPM giữ batch trong ngân sách phút, còn Max token/request được
-  truyền xuống API (`maxOutputTokens`/`max_tokens`) để hạn chế phản hồi bị cắt cụt, nhờ đó giảm số request
-  và tiết kiệm RPD.
+- Khi dịch PDF, backend gom nhiều đoạn chưa có cache vào batch lớn nhất có thể theo **TPM do admin đặt**,
+  **Max token/request** của từng model, và **trần 200 đoạn/request**. TPM giữ batch trong ngân sách phút,
+  còn Max token/request được truyền xuống API (`maxOutputTokens`/`max_tokens`); trần 200 đoạn giữ stream
+  đủ ngắn để không bị đứt ngang (xem mục **Tối ưu RPD** ở trên). Nhờ vậy giảm số request và tiết kiệm RPD.
+- Batch nào vẫn hỏng thì **tự chia đôi dịch lại**, và request hỏng vẫn bị tính vào RPM/RPD vì nó đã
+  tiêu quota thật của provider.
 - Trong lúc dịch batch, backend **stream** phản hồi (SSE) và đếm số đoạn đã dịch xong để đẩy tiến trình
   real-time ra frontend **mà không tách nhỏ request** — RPD giữ nguyên như khi gộp batch tối đa.
+
+## Chất lượng dịch: Gemini vs Qwen (đo 2026-07-15)
+
+So trên 14 đoạn mẫu của `pedsinreview.2021005273.pdf`, lấy bản dịch tham chiếu làm chuẩn. **Cả hai
+đều chạy được 14/14 đoạn; cả hai đều có lỗi y khoa thật — không bên nào thắng tuyệt đối.**
+
+| | Sai sót đo được |
+|---|---|
+| **Gemini 3.1 Flash Lite** | "công thức máu **toàn bộ**" (đúng: *toàn phần*) · `≥18` → **`>18`** (sai ranh giới khoảng tham chiếu) · "Resolves with medication discontinuation" → "**Giải quyết bằng cách ngừng thuốc**" (đọc thành mệnh lệnh; ý gốc là *tự hết* khi ngưng thuốc) · bỏ mất "inherited" khi dịch mảnh cụt |
+| **Qwen3 235B** | để nguyên "**reticulocyte**" không dịch (đúng: *hồng cầu lưới*) · pancytopenia → "**giảm toàn bộ huyết sắc tố**" — **sai nặng nhất**: *huyết sắc tố* là hemoglobin, còn pancytopenia là giảm cả **ba dòng tế bào máu**. Gemini dịch đúng ("giảm ba dòng tế bào máu") |
+
+Khác biệt cần lưu ý: **Qwen đổi dấu thập phân sang kiểu Việt** (`14,0`), **Gemini giữ kiểu Anh**
+(`14.0`). Cả hai đều biện hộ được, nhưng không thống nhất trong cùng bảng xét nghiệm thì dễ đọc nhầm.
+
+Nhiều lỗi trong bảng trên **bắt nguồn từ đoạn bị cắt giữa câu** (xem TODO #0), không phải model kém.
+
+## Bài học: vì sao batch dịch hỏng (đo thật 2026-07-15)
+
+Ghi lại vì lỗi này **rất dễ chẩn đoán nhầm**, và nhầm thì sẽ sửa sai chỗ.
+
+**Triệu chứng**: job PDF `failed` với `Provider không trả JSON hợp lệ cho batch dịch`.
+
+**Nguyên nhân thật**: Gemini sinh **JSON sai cấu trúc** — bỏ hẳn khoá `"text"` ở đoạn bắt đầu
+bằng ký tự `<`. Ví dụ thật với đoạn `"<2 SD for age)a"`:
+
+```
+{"id": 114, "text": "Rối loạn hồng cầu: Thiếu máu (Hgb"},
+{"id": 115, "<2 SD theo tuổi)a"},        <-- thiếu khoá "text":
+```
+
+Phản hồi có `finishReason=STOP`, đóng ngoặc đầy đủ, chỉ dùng 8.287/65.536 token — **không hề bị
+cắt**. `responseMimeType="application/json"` + dặn trong prompt KHÔNG chặn được; chỉ `responseSchema`
+mới chặn (ràng buộc bộ giải mã). Đo: batch 200 đoạn hỏng lặp lại được khi thiếu schema, 17/17 lần
+sạch khi có.
+
+**Những giả thuyết SAI đã bị số liệu bác bỏ** — đừng đi lại đường này:
+- ❌ *"Batch vượt trần 65.536 token đầu ra"*: batch hỏng chỉ dùng 8.287 token. Cả tài liệu 738 đoạn
+  ước lượng thừa nhất cũng chỉ ~54.000 token → **chưa bao giờ chạm trần**.
+- ❌ *"Hệ số ước lượng token tiếng Việt 1.3 quá thấp"*: đo thật `candidatesTokenCount / token nguồn`
+  = **1.07–1.25**. `_OUTPUT_EXPANSION_FACTOR = 1.3` là đúng, đừng nâng.
+- ❌ *"Lỗi parse JSON ⇒ phản hồi bị cắt"*: sai. Còn khả năng thứ ba — JSON **đủ ngoặc nhưng sai
+  khoá**. `_looks_truncated()` trong `providers/base.py` phân biệt hai ca này.
+
+**Quy tắc**: gặp lỗi parse batch, **dump phản hồi thô + `finishReason` + `usageMetadata` trước**,
+đừng suy luận từ triệu chứng.
+
+**Vấn đề riêng, chưa sửa**: stream SSE của Google đôi khi **đứt ngang** (~10-15%, đo trên ~14 lượt),
+trả về một phần dữ liệu mà **không báo lỗi** và `finishReason` vẫn `STOP`. Batch càng dài càng dễ
+dính (batch 738 đoạn đứt ở 702/738). Đây là lý do giữ cơ chế chia đôi batch, không phải vì token.
 
 ## Kiến trúc
 
@@ -279,6 +363,15 @@ Không có nút chuyển đổi runtime — engine/backend storage được ch�
 
 ## Việc cần làm tiếp (TODO)
 
+0. **Đoạn bị cắt giữa câu — trần chất lượng dịch hiện tại.** `collect_segments` bóc chữ **theo vị
+   trí trên trang** (để chèn bản dịch lại đúng bbox), nên với báo 2 cột một câu bị cắt ngang ở
+   biên cột/khối và mỗi mảnh thành một đơn vị dịch riêng. Đo trên `pedsinreview.2021005273.pdf`
+   (440 đoạn văn xuôi): **28% bắt đầu giữa câu, 72% kết thúc giữa câu, 22% cụt cả hai đầu**. Ví dụ
+   đoạn model thật sự nhận được: `'ited bone marrow failure. In a child with a history of bone'`
+   (bắt đầu bằng đuôi của "inherited"). Không model nào dịch chuẩn được mảnh như vậy — đây là
+   trần chất lượng chung, **không phải lỗi provider**. Hướng sửa: gộp các mảnh liền mạch trong
+   cùng khối/cột để dịch, rồi phân bổ bản dịch ngược lại từng bbox (phần phân bổ ngược là chỗ khó
+   vì phải giữ bố cục).
 1. Kiểm thử thêm trên nhiều PDF y khoa 2 cột phức tạp, đặc biệt tài liệu scan/OCR kém hoặc bảng nhiều tầng.
 2. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
 3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật nếu cần chạy song song — cần
