@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Quota limits plus per-request output-token ceilings.
     gemini_rpm_limit: int = 15
     gemini_tpm_limit: int = 250_000
-    gemini_rpd_limit: int = 1500
+    gemini_rpd_limit: int = 500
     gemini_max_tokens_per_request: int = 65_536
     gemma_rpm_limit: int = 30
     gemma_tpm_limit: int = 15_000

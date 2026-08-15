@@ -269,7 +269,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 <span className="quota-grid-head">RPD</span>
                 <span className="quota-grid-head">Max token/request</span>
 
-                <span className="quota-grid-label">Gemini 3.1 Flash Lite</span>
+                <span className="quota-grid-label">Gemini 3.5 Flash Lite</span>
                 <label className="quota-cell"><span className="quota-cell-label">RPM</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpm_limit} onChange={setNumField("gemini_rpm_limit")} /></label>
                 <label className="quota-cell"><span className="quota-cell-label">TPM</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_tpm_limit} onChange={setNumField("gemini_tpm_limit")} /></label>
                 <label className="quota-cell"><span className="quota-cell-label">RPD</span><input type="number" min="0" disabled={!isAdmin} value={form.gemini_rpd_limit} onChange={setNumField("gemini_rpd_limit")} /></label>

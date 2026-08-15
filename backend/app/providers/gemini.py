@@ -55,11 +55,11 @@ _BATCH_RESPONSE_SCHEMA = {
 
 class GeminiProvider(BaseProvider):
     name = "gemini"
-    display_name = "Gemini 3.1 Flash Lite"
+    display_name = "Gemini 3.5 Flash Lite"
 
     def __init__(
         self,
-        model: str = "gemini-3.1-flash-lite",
+        model: str = "gemini-3.5-flash-lite",
         display_name: str | None = None,
         name: str = "gemini",
     ):

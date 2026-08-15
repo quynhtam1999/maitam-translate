@@ -5,9 +5,9 @@ from .gemini import GeminiProvider
 from .qwen import QwenProvider
 
 # Thứ tự khai báo = thứ tự hiển thị, và frontend chọn model DÙNG ĐƯỢC đầu tiên làm
-# mặc định -> Gemini 3.1 Flash Lite đứng đầu, rồi Qwen, rồi Gemma.
+# mặc định -> Gemini 3.5 Flash Lite đứng đầu, rồi Qwen, rồi Gemma.
 _PROVIDERS: dict[str, BaseProvider] = {
-    "gemini": GeminiProvider(model="gemini-3.1-flash-lite", display_name="Gemini 3.1 Flash Lite"),
+    "gemini": GeminiProvider(model="gemini-3.5-flash-lite", display_name="Gemini 3.5 Flash Lite"),
     "qwen": QwenProvider(),
     "gemma": GeminiProvider(model="gemma-4-31b-it", display_name="Gemma 4 31B", name="gemma"),
 }

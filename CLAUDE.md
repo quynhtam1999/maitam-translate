@@ -9,7 +9,7 @@ Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **ti
 giữ bố cục dùng **overlay PyMuPDF** (xóa chữ gốc tại chỗ + chèn bản dịch đè lên, tự co
 cỡ chữ cho vừa).
 
-## Trạng thái hiện tại (cập nhật 2026-07-15)
+## Trạng thái hiện tại (cập nhật 2026-08-15)
 
 ✅ **Tính năng chính đã có**
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
@@ -151,7 +151,26 @@ cỡ chữ cho vừa).
   vào giữa đáy cột trái và đỉnh cột phải và cắt đứt mạch nối; nay bắt bằng luật riêng "không thân
   bài nào chạy xuống 5% cuối trang" (đo được: đáy thân bài y1=743, footer y1=773, trang cao 792).
 
+✅ **Nâng model Gemini lên 3.5 Flash Lite (2026-08-15)**
+- Đổi `gemini-3.1-flash-lite` → **`gemini-3.5-flash-lite`**, và hạ `GEMINI_RPD_LIMIT` **1500 → 500**
+  cho khớp hạn mức free tier thật của model mới. RPM 15 / TPM 250.000 / Max token 65.536 giữ nguyên
+  vì đã đúng sẵn (docs xác nhận 3.5 Flash Lite có output limit 65.536, context 1.048.576).
+- **Vì sao không chọn 3.6/3.7 Flash dù chúng mới hơn**: free tier của cả 3.5 Flash, 3.6 Flash và
+  3.7 Flash đều chỉ **20 RPD**, còn Flash Lite được **500 RPD**. Theo số đo thật (tài liệu 20 trang
+  = **4 request**), 20 RPD chỉ đủ ~5 tài liệu/ngày và hết quota giữa chừng ngay khi có batch hỏng
+  phải chia đôi. Cả kiến trúc này (gom batch theo TPM, trần 200 đoạn/request, cache theo user,
+  `paused_quota`) được xây quanh việc tiết kiệm RPD — 20 RPD là con số phá vỡ nó.
+- Mức tăng của 3.6/3.7 Flash nằm ở **coding và agentic** (DeepSWE 49→65%, AutomationBench 17→30%,
+  WebDev Arena Elo 1538→1588) — dự án này không dùng tới. Chúng còn có **thinking mode**, tốn output
+  token cho phần suy nghĩ và chậm hơn, phản tác dụng với 738 đoạn/tài liệu.
+- 3.5 Flash Lite vẫn là **nâng cấp thẳng một thế hệ** so với 3.1 Flash Lite ở đúng thứ dự án cần:
+  **long-context GDM-MRCR v2 60,1% → 72,2%** (đúng năng lực mà batch 200 đoạn/request đòi hỏi: giữ
+  mạch và không lẫn `id` giữa hàng trăm đoạn) và **GDPval-AA v2 642 → 1140**. Google mô tả nhánh
+  Flash-Lite là "best-in-class translation and multilingual understanding".
+
 ✅ **Kiểm tra gần nhất (2026-07-15) — E2E THẬT với API key thật**
+> ⚠️ Toàn bộ số đo dưới đây chạy trên **Gemini 3.1 Flash Lite**, tức model **trước** đợt nâng cấp
+> 2026-08-15. Chưa đo lại trên 3.5 Flash Lite.
 - **Dịch trọn `pedsinreview.2021005273.pdf`** (20 trang, 804 đoạn / 738 đoạn duy nhất) bằng
   **Gemini 3.1 Flash Lite**, cache rỗng để ép gọi API thật: **738/738 đoạn, 4 request, 124s**,
   xuất PDF 6,7 MB thành công. Lỗi `Provider không trả JSON hợp lệ` **không còn tái hiện**.
@@ -174,6 +193,13 @@ cỡ chữ cho vừa).
   poll không còn callback muộn. `npm run build` trong `frontend/`: pass.
 
 ⚠️ **Chưa kiểm thử**
+- **`gemini-3.5-flash-lite` chưa chạy E2E với API key thật** — đợt đổi model 2026-08-15 mới chỉ
+  kiểm bằng `compileall`, load registry (ra đúng model id + quota `15 / 250000 / 500 / 65536`) và
+  `npm run build`. Hai điểm **bắt buộc phải đo** trước khi tin tưởng, vì đây đúng là hai chỗ đã
+  từng làm hỏng job: (a) model mới có tôn trọng `responseSchema` không (docs ghi structured output
+  "Supported", nhưng bài học cũ là phải đo chứ đừng tin prompt/mime type), (b) stream SSE ở batch
+  200 đoạn có đứt ngang không. Nếu thấy batch bị cắt cụt nhiều bất thường, nghi `thinkingConfig`
+  trước — 3.5 Flash Lite có thinking mode, khác 3.1.
 - Cơ chế gộp câu đã chạy hết pipeline với API thật, nhưng **chưa chấm lại chất lượng bản dịch** để đo
   mức cải thiện so với bảng Gemini/Qwen cũ, và **chưa mở PDF kết quả để mắt người soi lại bố cục**.
 - Chưa kiểm thử có hệ thống toàn bộ luồng bằng browser sau bản sửa retry/cancel polling; mới có ca thật
@@ -188,12 +214,13 @@ Thứ tự khai báo trong `_PROVIDERS` (`providers/registry.py`) quyết địn
 frontend (`FileUpload.jsx`, `TextTranslate.jsx`) tự chọn **model dùng được đầu tiên** làm mặc
 định. Thứ tự hiện tại:
 
-1. **Gemini 3.1 Flash Lite** (`gemini-3.1-flash-lite`) — mặc định
+1. **Gemini 3.5 Flash Lite** (`gemini-3.5-flash-lite`) — mặc định
 2. **Qwen3 235B** (ModelScope)
 3. **Gemma 4 31B** (`gemma-4-31b-it`)
 
-> ⚠️ Tên model Gemini phải đúng chính xác: **`gemini-3.1-flash-lite`**. Không có model tên
-> `gemini-3.1-flash` — gọi tên đó API trả **404**. Danh sách model thật của key xem bằng
+> ⚠️ Tên model Gemini phải đúng chính xác — nhánh Lite luôn có hậu tố `-lite`, và **không có**
+> model tên `gemini-3.1-flash` (gọi tên đó API trả **404**). Trước khi đổi sang bất kỳ model nào,
+> xác minh tên thật của key bằng
 > `GET https://generativelanguage.googleapis.com/v1beta/models?key=...`.
 
 ### Model Qwen đang dùng
@@ -227,9 +254,13 @@ mình** trong ⚙ Cài đặt thì mới dịch được — không có key dùn
 So trên 14 đoạn mẫu của `pedsinreview.2021005273.pdf`, lấy bản dịch tham chiếu làm chuẩn. **Cả hai
 đều chạy được 14/14 đoạn; cả hai đều có lỗi y khoa thật — không bên nào thắng tuyệt đối.**
 
+> ⚠️ Bảng này đo trên **Gemini 3.1 Flash Lite**, model cũ trước đợt nâng cấp 2026-08-15. Chưa có
+> benchmark dịch Anh→Việt chuyên ngành y cho 3.5 Flash Lite, nên **không khẳng định được** các lỗi
+> dưới đây đã hết. Muốn biết chắc phải đo lại trên đúng 14 đoạn mẫu này.
+
 | | Sai sót đo được |
 |---|---|
-| **Gemini 3.1 Flash Lite** | "công thức máu **toàn bộ**" (đúng: *toàn phần*) · `≥18` → **`>18`** (sai ranh giới khoảng tham chiếu) · "Resolves with medication discontinuation" → "**Giải quyết bằng cách ngừng thuốc**" (đọc thành mệnh lệnh; ý gốc là *tự hết* khi ngưng thuốc) · bỏ mất "inherited" khi dịch mảnh cụt |
+| **Gemini 3.1 Flash Lite** (model cũ) | "công thức máu **toàn bộ**" (đúng: *toàn phần*) · `≥18` → **`>18`** (sai ranh giới khoảng tham chiếu) · "Resolves with medication discontinuation" → "**Giải quyết bằng cách ngừng thuốc**" (đọc thành mệnh lệnh; ý gốc là *tự hết* khi ngưng thuốc) · bỏ mất "inherited" khi dịch mảnh cụt |
 | **Qwen3 235B** | để nguyên "**reticulocyte**" không dịch (đúng: *hồng cầu lưới*) · pancytopenia → "**giảm toàn bộ huyết sắc tố**" — **sai nặng nhất**: *huyết sắc tố* là hemoglobin, còn pancytopenia là giảm cả **ba dòng tế bào máu**. Gemini dịch đúng ("giảm ba dòng tế bào máu") |
 
 Khác biệt cần lưu ý: **Qwen đổi dấu thập phân sang kiểu Việt** (`14,0`), **Gemini giữ kiểu Anh**
@@ -453,13 +484,16 @@ Không có nút chuyển đổi runtime — engine/backend storage được ch�
    `_looks_like_table_block` (a) bỏ sót bảng có khối < 4 dòng — hàng bảng lọt ra thành khối văn xuôi
    thường và bị gộp như văn xuôi, (b) cắt bảng theo **dòng** thay vì theo **ô**. Cân nhắc dùng
    `page.find_tables()` của PyMuPDF thay cho heuristic hiện tại.
-2. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
-3. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật để **kiểm soát concurrency** và
+2. **Chạy E2E `gemini-3.5-flash-lite` với API key thật** (cache rỗng, `pedsinreview.2021005273.pdf`)
+   để xác nhận `responseSchema` và độ ổn định stream SSE ở batch 200 đoạn — xem mục *Chưa kiểm thử*.
+   Tiện thể chấm lại 14 đoạn mẫu để cập nhật bảng *Chất lượng dịch* cho model mới.
+3. Hoàn thiện xử lý glossary (mode `translate`/`keep`) trong `services/glossary.py`.
+4. (Tùy chọn) nâng job runner từ `BackgroundTasks` lên hàng đợi thật để **kiểm soát concurrency** và
    bền qua restart; các BackgroundTask của request riêng hiện đã có thể chồng lấp. Các pha nặng đã
    chạy ngoài event loop nên không còn chặn poll, nhưng host free ngủ/restart giữa chừng vẫn làm job
    dừng (bấm **Resume** dịch tiếp được nhờ cache Postgres, nhưng job không tự chạy lại).
-4. Quota admin chỉnh trong bảng **Quản trị** vẫn ghi vào `.env` (ephemeral trên host free) — khi
+5. Quota admin chỉnh trong bảng **Quản trị** vẫn ghi vào `.env` (ephemeral trên host free) — khi
    deploy nên đặt quota qua env var lúc khởi tạo (`GEMINI_RPM_LIMIT`…) thay vì sửa runtime. Chuyển
    quota vào DB là follow-up tùy chọn.
-5. `quota_tracker` và giới hạn đăng nhập sai (`_login_attempts`) vẫn in-memory (reset khi restart)
+6. `quota_tracker` và giới hạn đăng nhập sai (`_login_attempts`) vẫn in-memory (reset khi restart)
    — chấp nhận được, không nằm trong phạm vi việc tách state lần này.
