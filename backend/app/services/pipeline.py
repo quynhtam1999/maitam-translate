@@ -22,8 +22,7 @@ from ..providers.registry import get_provider
 from . import storage
 from .cache import SegmentCache
 from .glossary import load_glossary_bytes
-from .pdf_overlay import collect_segments, overlay_translate
-from .segment_merge import build_translation_units
+from .layout import analyze_document, render_document
 from .translator import Translator
 
 try:
@@ -73,14 +72,13 @@ async def translate_pdf(
         async with _async_local_copy(input_key) as tmp_in:
             # PyMuPDF là đồng bộ và có thể mất lâu với PDF nhiều bbox. Mở/đóng doc hoàn
             # toàn trong worker thread để poll status vẫn được phục vụ trên event loop.
-            segments, page_count = await asyncio.to_thread(_extract_pdf, tmp_in)
-            # Gộp các mảnh câu bị cắt ngang ở biên khối/cột/trang trước khi dịch; bản dịch
-            # được cắt trả về đúng từng bbox trong translate_units.
-            units = build_translation_units(segments)
+            # Phân tích cấu trúc trang (bảng / hình / chữ). Mỗi khối trả về là một đơn vị
+            # dịch TRỌN VẸN — không có mảnh câu, nên không phải gộp/cắt lại gì sau đó.
+            blocks, page_count = await asyncio.to_thread(_extract_pdf, tmp_in)
 
             # Giai đoạn 2: dịch — cập nhật tiến độ theo từng batch (real-time).
             progress.phase = "translating"
-            progress.segments_total = _count_unique_unit_texts(units)
+            progress.segments_total = _count_unique_unit_texts(blocks)
             progress.pages_total = page_count
             job_store.update_job(job_id, progress=progress)
 
@@ -92,7 +90,7 @@ async def translate_pdf(
 
             translations = await _translate_units_without_blocking(
                 translator,
-                units,
+                blocks,
                 target_lang,
                 on_progress,
                 api_key,
@@ -108,7 +106,7 @@ async def translate_pdf(
                 tmp_out_path = Path(tmp_out_file.name)
             try:
                 await asyncio.to_thread(
-                    _render_pdf, tmp_in, tmp_out_path, segments, translations
+                    _render_pdf, tmp_in, tmp_out_path, blocks, translations
                 )
                 await asyncio.to_thread(storage.upload_file, output_key, tmp_out_path)
             finally:
@@ -186,10 +184,10 @@ async def _async_local_copy(key: str):
 
 
 def _extract_pdf(input_path: Path):
-    """Bóc segment trong worker; không truyền đối tượng fitz.Document qua thread."""
+    """Phân tích bố cục trong worker; không truyền đối tượng fitz.Document qua thread."""
     doc = fitz.open(str(input_path))
     try:
-        return collect_segments(doc), doc.page_count
+        return analyze_document(doc), doc.page_count
     finally:
         doc.close()
 
@@ -197,13 +195,13 @@ def _extract_pdf(input_path: Path):
 def _render_pdf(
     input_path: Path,
     output_path: Path,
-    segments,
+    blocks,
     translations: dict[str, str],
 ) -> None:
     """Mở lại PDF và dựng kết quả hoàn toàn trong worker thread."""
     doc = fitz.open(str(input_path))
     try:
-        overlay_translate(doc, segments, translations)
-        doc.save(str(output_path))
+        render_document(doc, blocks, translations)
+        doc.save(str(output_path), garbage=3, deflate=True)
     finally:
         doc.close()

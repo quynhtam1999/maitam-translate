@@ -5,11 +5,11 @@ Web app dịch **tài liệu PDF y khoa** (sản phụ khoa, nhi khoa) sang **ti
 **văn bản dán tay**. Engine dịch đa nhà cung cấp: **Gemini/Gemma 4 31B** (Google AI Studio) và
 **Qwen3 235B** qua **ModelScope API-Inference** (endpoint OpenAI-compatible, server quốc tế `.ai`).
 
-Đây là bản web của phần mềm desktop cùng tên (Python/Tkinter, đóng gói .exe). Kỹ thuật
-giữ bố cục dùng **overlay PyMuPDF** (xóa chữ gốc tại chỗ + chèn bản dịch đè lên, tự co
-cỡ chữ cho vừa).
+Đây là bản web của phần mềm desktop cùng tên (Python/Tkinter, đóng gói .exe). Kỹ thuật giữ bố
+cục nằm ở **engine bố cục riêng** (`services/layout/`, PyMuPDF): nhận diện cấu trúc trang
+(bảng / hình / chữ) trước, dịch theo **khối trọn vẹn**, rồi rót bản dịch trở lại đúng cấu trúc.
 
-## Trạng thái hiện tại (cập nhật 2026-08-15)
+## Trạng thái hiện tại (cập nhật 2026-08-16)
 
 ✅ **Tính năng chính đã có**
 - Dịch PDF y khoa bằng job bất đồng bộ (`queued` → `running` → `done` / `paused_quota` / `failed`),
@@ -19,9 +19,11 @@ cỡ chữ cho vừa).
 - Dịch văn bản dán tay bằng 1 request cho mỗi lần gửi, giúp RPD không thể thấp hơn nữa ở luồng văn bản.
 - Provider thật: Gemini, Gemma 4 31B qua Google AI Studio và Qwen3 235B qua **ModelScope API-Inference**
   (OpenAI-compatible). Backend đọc token usage thật từ phản hồi để ghi quota cục bộ.
-- PDF overlay bằng PyMuPDF: bóc chữ, xóa chữ gốc tại chỗ, chèn bản dịch, hỗ trợ tài liệu 2 cột,
-  giữ ảnh/biểu đồ và tách bảng vector theo cell/dòng để hạn chế vỡ bố cục.
-- Ảnh/biểu đồ chưa OCR nên không dịch chữ nằm trong ảnh; caption và chữ thật ngoài vùng ảnh vẫn được dịch.
+- Engine bố cục PDF (`services/layout/`): nhận diện bảng (theo nền tô + nét kẻ + `find_tables`),
+  hình/nhãn trong hình, hộp lưu đồ, caption, footnote, header–footer chạy trang, rồi chia cột và
+  gom dòng thành **khối dịch trọn vẹn**. Bản dịch được dựng lại đúng khối, đúng cột, đúng ô bảng.
+- Ảnh/biểu đồ chưa OCR nên không dịch chữ **nằm bên trong ảnh raster**; nhãn, caption và mọi chữ
+  thật (kể cả chữ nằm ĐÈ trên ảnh hoặc trên nền màu) đều được dịch tại chỗ.
 
 ✅ **Giao diện thân thiện với mobile**
 - Header thu gọn thành nút `tên tài khoản ☰` mở panel thả xuống (Quản trị / Cài đặt / Đổi mật khẩu /
@@ -105,51 +107,87 @@ cỡ chữ cho vừa).
   trắng cả tài liệu. Request hỏng vẫn được `quota_tracker.record()` vì nó **đã tiêu quota thật** —
   không ghi thì RPM/RPD bị đếm thiếu.
 
-✅ **Gộp mảnh câu bị PDF cắt ngang (2026-07-15)**
-- `collect_segments` bóc chữ **theo vị trí trên trang** để chèn bản dịch lại đúng bbox, nên một câu
-  bị cắt ở biên khối/cột/trang thành nhiều mảnh và mỗi mảnh từng là một đơn vị dịch riêng — model
-  nhận được thứ như `'ited bone marrow failure. In a child with a history of bone'` (đuôi của
-  *inherited*). Không model nào dịch chuẩn được mảnh như vậy: đây là **trần chất lượng chung**,
-  không phải lỗi provider.
-- `services/segment_merge.py` gộp các mảnh liền mạch trong thứ tự đọc thành **đơn vị dịch**, dịch
-  trọn câu, rồi **cắt bản dịch trả về từng bbox theo tỉ lệ độ dài nguồn**, luôn cắt ở ranh giới từ.
-  > **Vì sao cắt theo tỉ lệ là đúng dù trật tự từ Việt/Anh khác nhau**: người đọc đọc các bbox
-  > *theo thứ tự đọc*, nên chỗ cắt không cần khớp ngữ nghĩa với mảnh gốc — chỉ cần ghép các phần
-  > lại đúng thứ tự thì ra nguyên văn bản dịch, và mỗi phần vừa bbox của nó.
-- **Đo trên 2 tài liệu y khoa 2 cột thật** (1176 khối, tạp chí + sách): mảnh văn xuôi **cụt đầu giảm
-  ~40%** (106→64 và 60→45), gộp được cả qua **biên cột** (đáy cột trái → đỉnh cột phải) và qua
-  **biên trang**. Soi tay toàn bộ các chỗ nối qua biên cột/trang: **không ca nào gộp nhầm**
-  (`'…may result in a'` + `'higher prevalence of disease…'`). Ngưỡng chỉnh trên tài liệu thứ nhất
-  chạy thẳng trên tài liệu thứ hai không phải sửa gì. Phần cụt đầu còn lại phần lớn là **dòng bảng**
-  (việc #1, không phải luật gộp câu) → xét riêng văn xuôi thì giảm quá nửa.
-- **Bonus RPD**: gộp làm số đơn vị dịch duy nhất giảm ~8% (ít việc gọi API hơn), số request không đổi.
-- **Không làm rơi thêm chữ, không làm đoạn lởm chởm hơn** — so cũ/mới cùng một bản dịch giả giãn
-  1.15×: số bbox tràn **giảm nhẹ** ở cả hai tài liệu (157→154 và 31→29). Chênh cỡ chữ trong cùng
-  đoạn gộp: trung vị **0.0pt**, tối đa 2.8pt — **bản cũ cũng y hệt** (0.0 / 2.9pt), tức độ lởm chởm
-  là vốn có chứ không do cắt theo tỉ lệ. Lý do: cắt theo tỉ lệ giữ nguyên hệ số giãn ở mọi mảnh nên
-  Fitter co chữ đều như trước.
-- ⚠️ **Cache bản dịch cũ thành vô dụng một lần**: khoá cache là *nội dung đơn vị dịch*, nay là câu
-  đã gộp thay vì từng mảnh. Job cũ sẽ dịch lại từ đầu (tốn RPD một lần), không phải lỗi.
-- Luật gộp cố ý **chặt** (sai một lần gộp là trộn nội dung hai khối không liên quan, hại hơn cái nó
-  sửa): phải **cụt đuôi ở mảnh trước + mở đầu bằng chữ thường ở mảnh sau**, cùng kiểu chữ, và hình
-  học phải hợp lý — cùng cột thì khe dọc nhỏ, tràn cột/trang thì mảnh trước phải **chạm đáy cột**.
-  Không chắc thì không gộp: mảnh giữ nguyên như trước, không tệ đi.
+✅ **Viết lại engine bố cục PDF (2026-08-16)** — `services/layout/`
+Engine cũ (`pdf_overlay.py` + `segment_merge.py`) đã **bị xoá**. Nó coi mọi block PyMuPDF là văn
+xuôi như nhau, rồi cứu vãn bằng cách gộp mảnh câu và **cắt bản dịch theo tỉ lệ ký tự** rải về từng
+bbox. Chạy `01. tntc.pdf` (sách sản phụ khoa 18 trang, 2 cột) đo được nó hỏng nặng:
 
-✅ **Thứ tự đọc & header chạy trang (2026-07-15, viết lại cùng đợt)**
-- Thứ tự đọc cũ (`_reading_order_key`) xếp **mọi khối ở 22% đầu trang** vào "băng header" — tức
-  nuốt luôn đỉnh cả hai cột thân bài rồi trộn chúng vào nhau. Trước đây vô hại (mỗi bbox dịch độc
-  lập, chèn lại theo `block_id`) nhưng việc gộp câu thì **phụ thuộc hoàn toàn** vào thứ tự đọc đúng.
-  Nay thay bằng thuật toán **băng/cột**: khối chạy ngang cả trang (rộng ≥72%) cắt băng, trong mỗi
-  băng đọc hết cột trái rồi cột phải; phân cột theo **tâm khối**, không theo "có cắt qua tâm trang"
-  (đo được: cột trái chạy tới x=302 còn cột phải bắt đầu x=294 — **hai cột đều lấn qua tâm 297**).
-- Header/footer chạy trang nhận diện bằng **chữ lặp lại** (sau khi bỏ số trang), **không** bằng vị
-  trí lặp lại: đo được băng `y0≈58` trúng 10/15 trang nhưng **toàn là thân bài** — đỉnh khung chữ
-  đương nhiên lặp y0 ở mọi trang. Kết quả: đúng **15/372 khối** là furniture, mỗi trang 1, không
-  bắt nhầm khối nào. Chúng bị **bỏ qua trong mạch đọc** (nhờ vậy cuối trang trước nối được đầu
-  trang sau) nhưng **vẫn được dịch** bình thường.
-- Footer trang mở chương (`111 DOI: 10.1201/…`) nằm **trong cột trái, dưới cùng**, nên từng chen
-  vào giữa đáy cột trái và đỉnh cột phải và cắt đứt mạch nối; nay bắt bằng luật riêng "không thân
-  bài nào chạy xuống 5% cuối trang" (đo được: đáy thân bài y1=743, footer y1=773, trang cao 792).
+| Lỗi đo được ở bản cũ | Nguyên nhân |
+|---|---|
+| Bảng 32-1 **trắng trơn**, chữ của bảng bị hút sang khối khác | `_looks_like_table_block` đòi ≥4 dòng *trong một block*; sách này mỗi hàng bảng là 1 block riêng ⇒ **0/18 trang nhận ra bảng nào**. Hàng bảng bị gộp vào văn xuôi rồi cắt theo tỉ lệ |
+| Footnote và caption **đè lên hình** | cùng cơ chế cắt theo tỉ lệ, không phân biệt vùng |
+| Chữ gốc còn nguyên, bản dịch **đè chồng lên** | redaction làm **trôi chữ** (xem dưới) |
+| Trang mở chương + hộp KEY POINTS mất sạch chữ | 37 block bị loại vì `_overlaps_image` |
+
+Nguyên lý bản mới: **nhận diện cấu trúc trước, dịch sau, và đơn vị dịch luôn là một khối trọn vẹn.**
+
+- `analyze.py` — bóc **dòng** (kèm cỡ/đậm/nghiêng/serif/màu) → khoanh vùng (bảng, hình, hộp lưu đồ,
+  caption, footnote, header–footer chạy trang) → chia cột & thứ tự đọc → gom dòng thành **khối**
+  (đoạn văn, tiêu đề, gạch đầu dòng, ô bảng, nhãn hình) → nối khối chảy tràn sang cột/trang kế.
+- `tables.py` — nhận bảng bằng 3 tín hiệu độc lập: **nền tô** nằm gọn trong trang có ≥2 dòng chữ,
+  **≥3 nét kẻ ngang** cùng khoảng x, và `find_tables(strategy="lines_strict")`. Chia ô theo cụm cột
+  rồi cắt hàng tại nét kẻ. Kết quả trên `01. tntc.pdf`: **87 ô bảng** (bản cũ: 0), ô nhiều dòng vẫn
+  là **một** đơn vị dịch. Chiến lược `"text"` bị loại vì đo được nó coi nguyên trang là bảng 59×10.
+- `render.py` — **rót tuần tự**, không cắt theo tỉ lệ: khối tràn 2 cột thì đổ đầy vùng 1 rồi mới
+  sang vùng 2, nên chữ không bao giờ rơi vào ô bảng hay caption của khối khác.
+- `fonts.py` — 8 face Việt hoá: **Tinos** (khớp metric Times) cho serif, **Noto Sans** cho sans,
+  DejaVuSans dự phòng, tự đổi font khi thiếu glyph (`≥ ≤ → ←` Noto Sans không có, Tinos có).
+
+**Đơn vị dịch không còn cắt giữa câu** (yêu cầu gốc). Đo trên `01. tntc.pdf`:
+
+| | đơn vị cụt đuôi | đơn vị cụt đầu |
+|---|---|---|
+| Lấy block PDF làm đơn vị (cách cũ) | **72%** | 15% |
+| Khối của engine mới (văn xuôi) | **13%** | 10% |
+
+Ba luật làm nên khác biệt đó, mỗi luật đều từ một ca hỏng đo được:
+- **Đổi đậm/nghiêng KHÔNG cắt đoạn**, chỉ đổi cỡ hoặc màu mới cắt. Sách y khoa hay mở đầu đoạn bằng
+  cụm in đậm; coi đó là hết đoạn thì đoạn đứt ngay **giữa từ** (`'…may be insti-'` / `'tuted. There
+  are many…'`). Kiểu chữ của khối lấy theo phần chữ chiếm nhiều nhất.
+- **Nối tràn cột/trang xuyên qua khối ngoài mạch đọc**: tiêu đề, caption, tiêu đề bảng, header chạy
+  trang, nhãn hình không cắt mạch — chỉ khối văn xuôi mới cắt (đo được: đoạn cuối trang 830 nối sang
+  cột phải trang 831, mà đầu trang 831 lại là tiêu đề bảng 32-1). Luật nối vẫn **chặt**: cụt đuôi +
+  mở đầu chữ thường + cùng cỡ/màu + mảnh trước phải **chạm đáy cột** (≥75% chiều cao trang). Soi tay
+  toàn bộ 14 mối nối: **không mối nào ghép sai**, tất cả đều kết thúc trọn câu.
+- **Không bỏ chữ nào.** Luật `_overlaps_image` bị xoá hẳn: chữ nằm đè lên ảnh/nền màu vẫn là chữ,
+  vẫn dịch tại chỗ, chỉ ảnh là không bị đụng tới.
+
+**Chữ vừa hộp mà không phải co nhỏ** (theo lựa chọn "co vừa phải + mượn chỗ trống"). Thứ tự thử:
+giữ nguyên cỡ → co dần tối đa 15% → nới xuống khoảng trắng trống ngay bên dưới (đã tính sẵn, không
+đụng dòng/ảnh/hàng bảng nào) → cuối cùng mới co mạnh. Số khối phải co dưới 0.85 lần giảm
+**159 → 34 / 560** nhờ ba sửa lỗi đo được:
+- Đổi Noto Serif → **Tinos**: một dòng bảng 9pt rộng 226pt ở bản gốc thành **364pt** khi đặt bằng
+  Noto Serif — tức 35% co chữ là do **font rộng hơn**, không phải do tiếng Việt dài hơn. Tinos rộng
+  **×0.98** so với Times gốc (đo trên 1117 dòng).
+- Hộp chữ phải cao `n×pitch`, không phải cao bằng **hộp mực** (bbox của n dòng hụt gần một khoảng
+  dẫn dòng ⇒ dòng cuối không bao giờ đủ chỗ). Nới đều lên/xuống nửa khoảng leading, chặn ở chỗ trống thật.
+- **Nhãn hình nở ngang** sang phải thay vì co chữ (nhãn ngắn trong hộp vừa khít không xuống dòng được).
+
+**Chữ trong hộp lưu đồ là một nhãn**: khung kín nhỏ (<45% bề ngang, <15% chiều cao trang) chứa ≤3
+dòng thì cả hộp thành **một** khối, dịch trọn cụm và canh lề đúng như bản gốc (đo trên lưu đồ trang
+839: hộp ~74×33pt). Canh giữa chỉ khi bản gốc canh giữa — mặc định canh giữa hết thì cả cột mục lục
+trang mở chương trôi khỏi chỗ.
+
+⚠️ **Cache bản dịch cũ thành vô dụng một lần**: khoá cache là *nội dung khối*, mà khối nay khác hẳn
+mảnh cũ. Job cũ sẽ dịch lại từ đầu (tốn RPD một lần), không phải lỗi.
+
+⚠️ **Số đơn vị dịch tăng** (bảng và nhãn lưu đồ nay tách riêng): `01. tntc.pdf` ra ~390–470 khối.
+Vẫn gói trong 2–3 request nhờ trần 200 đoạn/batch.
+
+✅ **Xoá chữ gốc: chọn cách theo từng trang (2026-08-16)**
+- PyMuPDF `apply_redactions` là cách sạch nhất (gỡ hẳn chữ khỏi tầng text) nhưng **làm hỏng**
+  `01. tntc.pdf`: file này đặt chữ bằng toán tử dời chỗ **tương đối**, nên xoá một dòng làm các dòng
+  sau **trôi đi** — đo được footnote trang 831 nhảy từ `y=660` lên `y=497` (đè lên hình), ghi chú
+  bảng trang 832 nhảy `330 → 251`. Đây mới là thủ phạm thật của ca "chữ gốc còn nguyên, bản dịch đè
+  chồng lên", **không phải** luật bỏ khối đè ảnh như chẩn đoán ban đầu.
+- `clean_contents(sanitize=True)` **không cứu được**: so ảnh render trước/sau, chính nó làm trôi chữ
+  ở **62/1867 dòng** của tài liệu này. Đừng thử lại đường này.
+- Nên: thử bôi đen trên một **bản sao** trước; trang nào mà mọi dòng còn lại vẫn **nguyên vị trí**
+  thì bôi đen thật, trang nào có dòng trôi thì chuyển sang **vá nền** (vẽ chữ nhật màu nền đè lên
+  đúng hộp dòng chữ, màu lấy bằng **mốt** các điểm ảnh bên trong hộp — nét chữ luôn là thiểu số nên
+  đúng cả với chữ trắng trên nền sẫm). Trên `01. tntc.pdf`: 3/18 trang bôi đen được, 15/18 phải vá.
+- Đánh đổi của vá nền: chữ gốc vẫn nằm trong tầng text (vô hình vì bị che), nên tìm kiếm/copy trên
+  file kết quả sẽ thấy cả bản gốc lẫn bản dịch.
 
 ✅ **Nâng model Gemini lên 3.5 Flash Lite (2026-08-15)**
 - Đổi `gemini-3.1-flash-lite` → **`gemini-3.5-flash-lite`**, và hạ `GEMINI_RPD_LIMIT` **1500 → 500**
@@ -168,42 +206,49 @@ cỡ chữ cho vừa).
   mạch và không lẫn `id` giữa hàng trăm đoạn) và **GDPval-AA v2 642 → 1140**. Google mô tả nhánh
   Flash-Lite là "best-in-class translation and multilingual understanding".
 
-✅ **Kiểm tra gần nhất (2026-07-15) — E2E THẬT với API key thật**
-> ⚠️ Toàn bộ số đo dưới đây chạy trên **Gemini 3.1 Flash Lite**, tức model **trước** đợt nâng cấp
-> 2026-08-15. Chưa đo lại trên 3.5 Flash Lite.
-- **Dịch trọn `pedsinreview.2021005273.pdf`** (20 trang, 804 đoạn / 738 đoạn duy nhất) bằng
-  **Gemini 3.1 Flash Lite**, cache rỗng để ép gọi API thật: **738/738 đoạn, 4 request, 124s**,
-  xuất PDF 6,7 MB thành công. Lỗi `Provider không trả JSON hợp lệ` **không còn tái hiện**.
-- **Chạy lại sau khi có cơ chế gộp câu** bằng Gemini thật: job 20 trang hoàn tất **679/679 đơn vị**,
-  `status="done"`, `error=null`; đây là lần E2E API thật đầu tiên xác nhận luồng gộp → dịch → chia
-  bản dịch về bbox → dựng/upload PDF chạy hết pipeline. Lỗi 502 nhìn thấy ở frontend thuộc lớp
-  poll/proxy, không làm hỏng job hay file kết quả; code đã được gia cố nhưng vẫn cần retest production.
-- So chất lượng Gemini vs Qwen trên 14 đoạn mẫu (văn xuôi dài, bảng số, tiêu đề, mẩu cụt):
-  cả hai đều trả **14/14 đoạn**, JSON hợp lệ. Cả hai đều có sai sót y khoa thật, không bên nào
-  thắng tuyệt đối — xem mục *Chất lượng dịch* bên dưới.
-- `python -m compileall backend/app`: pass. Import `app.main` thành công (11 route).
-- Sanity test FastAPI bằng `TestClient` (SQLite + đĩa cục bộ, storage tạm cô lập): bootstrap admin
-  → login → lưu API key (mã hóa AES-GCM, masked đúng) → upload/đọc glossary CSV → tạo job PDF tối giản
-  → tải PDF kết quả → xóa job/file qua `/api/settings/jobs/clear`.
-- Sanity test trực tiếp tầng DB/storage: init SQLite qua SQLAlchemy, đọc/ghi API key, cache segment,
-  storage local và `job_store` đều pass.
-- Regression test chống 502: pipeline mở lại và dựng PDF hợp lệ; SQLite file dùng `QueuePool`;
-  event loop vẫn phản hồi trong lúc local-copy, dịch/cache và render giả lập đang block ở worker.
-- Test polling frontend: pass cả 3 ca **502 + body done**, 502 trống rồi retry thành công, và hủy
-  poll không còn callback muộn. `npm run build` trong `frontend/`: pass.
+✅ **Kiểm tra engine bố cục mới (2026-08-16) — `01. tntc.pdf`, bản dịch GIẢ**
+Bản dịch giả dài hơn bản gốc ~15% và có dấu tiếng Việt, dùng để soi bố cục mà không tốn quota:
+- Phân tích 18 trang: **2,5s**; dựng lại PDF: **~15s**; ra 467 khối (140 đoạn văn, 87 ô bảng,
+  136 nhãn hình, 61 tiêu đề, 22 header/footer, 17 gạch đầu dòng, caption + tiêu đề bảng).
+- **Soi mắt người từng trang** ở các trang khó nhất (830 mở chương 3 cột + hộp KEY POINTS, 831
+  bảng + hình giải phẫu + footnote, 832 bảng 2 cột, 834 hai cột đặc, 839 lưu đồ, 843/845 nhiều
+  bảng): bảng đủ hàng đủ ô, hình và nét vẽ nguyên vẹn, nhãn nằm đúng trong hộp lưu đồ, footnote
+  đúng chỗ, **không còn chữ gốc sót lại và không còn chữ đè chồng**.
+- Đối chiếu chữ trong file kết quả với bản gốc theo toạ độ: không còn dòng nào bị trôi chỗ.
+
+✅ **E2E pipeline với provider giả (2026-08-16)**
+- Chạy thẳng `pipeline.translate_pdf` trên `01. tntc.pdf` với SQLite + đĩa cục bộ tạm và một
+  provider stub: `status=done`, `error=None`, tiến trình `391/391`, PDF kết quả 2,4 MB,
+  **18/18 trang có bản dịch**. Bao trọn job_store → storage → cache → translator → layout → render.
+- `python -m compileall backend/app`: pass. Import `app.main`: 11 route.
+
+✅ **Kiểm tra trước đó (2026-07-15) — E2E THẬT với API key thật**
+> ⚠️ Toàn bộ số đo dưới đây chạy trên **Gemini 3.1 Flash Lite** và trên **engine PDF cũ** (đã bị
+> thay 2026-08-16). Giữ lại vì phần quota/batch/provider không đổi.
+- **Dịch trọn `pedsinreview.2021005273.pdf`** (20 trang, 804 đoạn / 738 đoạn duy nhất), cache rỗng
+  để ép gọi API thật: **738/738 đoạn, 4 request, 124s**, xuất PDF 6,7 MB thành công. Lỗi
+  `Provider không trả JSON hợp lệ` **không còn tái hiện**.
+- So chất lượng Gemini vs Qwen trên 14 đoạn mẫu: cả hai đều trả **14/14 đoạn**, JSON hợp lệ, và
+  đều có sai sót y khoa thật — xem mục *Chất lượng dịch* bên dưới.
+- Sanity test FastAPI bằng `TestClient`: bootstrap admin → login → lưu API key (mã hóa AES-GCM,
+  masked đúng) → upload/đọc glossary CSV → tạo job PDF tối giản → tải PDF kết quả → xóa job/file.
+- Sanity test tầng DB/storage, regression test chống 502, test polling frontend (3 ca) và
+  `npm run build` trong `frontend/`: pass.
 
 ⚠️ **Chưa kiểm thử**
-- **`gemini-3.5-flash-lite` chưa chạy E2E với API key thật** — đợt đổi model 2026-08-15 mới chỉ
-  kiểm bằng `compileall`, load registry (ra đúng model id + quota `15 / 250000 / 500 / 65536`) và
-  `npm run build`. Hai điểm **bắt buộc phải đo** trước khi tin tưởng, vì đây đúng là hai chỗ đã
-  từng làm hỏng job: (a) model mới có tôn trọng `responseSchema` không (docs ghi structured output
-  "Supported", nhưng bài học cũ là phải đo chứ đừng tin prompt/mime type), (b) stream SSE ở batch
-  200 đoạn có đứt ngang không. Nếu thấy batch bị cắt cụt nhiều bất thường, nghi `thinkingConfig`
-  trước — 3.5 Flash Lite có thinking mode, khác 3.1.
-- Cơ chế gộp câu đã chạy hết pipeline với API thật, nhưng **chưa chấm lại chất lượng bản dịch** để đo
-  mức cải thiện so với bảng Gemini/Qwen cũ, và **chưa mở PDF kết quả để mắt người soi lại bố cục**.
-- Chưa kiểm thử có hệ thống toàn bộ luồng bằng browser sau bản sửa retry/cancel polling; mới có ca thật
-  tái hiện 502 trước khi sửa và regression test trực tiếp logic frontend.
+- **Engine bố cục mới chưa chạy với API key thật** — mới chỉ chạy với bản dịch giả và provider
+  stub. Cần một lần dịch thật để xem chất lượng chữ tiếng Việt thật (dài hơn bao nhiêu, có phải co
+  chữ nhiều hơn bản giả không) và để chấm lại chất lượng dịch khi đơn vị dịch nay là **đoạn trọn vẹn**.
+- **`gemini-3.5-flash-lite` chưa chạy E2E với API key thật** — đợt đổi model 2026-08-15 mới kiểm
+  bằng `compileall`, load registry (đúng model id + quota `15 / 250000 / 500 / 65536`) và
+  `npm run build`. Hai điểm **bắt buộc phải đo**, vì đúng là hai chỗ đã từng làm hỏng job:
+  (a) model mới có tôn trọng `responseSchema` không (docs ghi structured output "Supported", nhưng
+  bài học cũ là phải đo chứ đừng tin prompt/mime type), (b) stream SSE ở batch 200 đoạn có đứt ngang
+  không. Thấy batch bị cắt cụt bất thường thì nghi `thinkingConfig` trước — 3.5 Flash Lite có
+  thinking mode, khác 3.1.
+- Engine mới mới chỉ đo trên **một** tài liệu (`01. tntc.pdf`) cộng với các tài liệu cũ chưa chạy
+  lại. Cần thêm PDF y khoa khác kiểu: tạp chí 2 cột, tài liệu scan/OCR, bảng nhiều tầng.
+- Chưa kiểm thử có hệ thống toàn bộ luồng bằng browser sau bản sửa retry/cancel polling.
 - Chưa chạy regression test có chủ đích với Postgres (Neon)/S3 sau đợt tách worker; bộ test tự động
   hiện dùng SQLite file + đĩa cục bộ.
 - Gemma 4 31B chưa được đo trong đợt này (chỉ Gemini và Qwen).
@@ -267,8 +312,9 @@ Khác biệt cần lưu ý: **Qwen đổi dấu thập phân sang kiểu Việt*
 (`14.0`). Cả hai đều biện hộ được, nhưng không thống nhất trong cùng bảng xét nghiệm thì dễ đọc nhầm.
 
 Nhiều lỗi trong bảng trên **bắt nguồn từ đoạn bị cắt giữa câu**, không phải model kém — bảng này đo
-**trước** khi có cơ chế gộp mảnh câu (xem mục *Gộp mảnh câu*), nên **cần đo lại** thì mới biết còn
-lại bao nhiêu là lỗi thật của model. Ví dụ "bỏ mất *inherited*" của Gemini chính là ca mảnh cụt.
+trên **engine PDF cũ**, khi đơn vị dịch còn là mảnh bbox (ví dụ "bỏ mất *inherited*" của Gemini
+chính là một mảnh cụt). Engine mới đưa tỉ lệ đơn vị cụt đuôi từ 72% xuống 13%, nên **cần đo lại**
+mới biết còn bao nhiêu là lỗi thật của model.
 
 ## Bài học: vì sao batch dịch hỏng (đo thật 2026-07-15)
 
@@ -309,8 +355,18 @@ dính (batch 738 đoạn đứt ở 702/738). Đây là lý do giữ cơ chế c
 - `frontend/` — **React + Vite**: đăng nhập (không đăng ký), giao diện upload PDF, theo dõi tiến trình, tải kết quả, tab dịch văn bản, **bảng Cài đặt** (API key theo account / đổi mật khẩu / dọn cache), **bảng Quản trị** (chỉ admin).
 - `backend/` — **Python + FastAPI + PyMuPDF**: auth/session cookie + vai trò admin, nhận PDF, dịch giữ bố cục, đa provider, đọc/ghi cấu hình runtime vào `.env`.
 
+Engine bố cục PDF nằm trong `backend/app/services/layout/`, dùng qua đúng hai hàm:
+
+```python
+blocks = analyze_document(doc)             # bảng / hình / chữ; mỗi khối là 1 đơn vị dịch trọn vẹn
+render_document(doc, blocks, translations) # xóa chữ gốc + rót bản dịch về đúng cấu trúc
+```
+
+`translations` là ánh xạ `block.id -> bản dịch`; `translator.translate_units()` nhận thẳng danh sách
+khối, khử trùng lặp theo nội dung và trả về đúng ánh xạ đó — **không còn bước cắt/gộp nào ở giữa**.
+
 Dịch PDF chạy theo **mẫu job bất đồng bộ**: tạo job → poll trạng thái → tải file kết quả.
-Bản dịch được **cache theo nội dung đoạn và user** (SQLAlchemy Core — SQLite cục bộ hoặc Postgres
+Bản dịch được **cache theo nội dung khối và user** (SQLAlchemy Core — SQLite cục bộ hoặc Postgres
 khi deploy) nên hết quota/tắt máy vẫn **dịch tiếp** được (resume), kể cả khi đổi sang model khác,
 nhưng không dùng chung cache giữa các tài khoản. Job vẫn dùng FastAPI `BackgroundTasks`, nhưng các
 pha PDF/storage/provider/cache đồng bộ hoặc dài được đưa sang worker thread để không chặn event loop
@@ -395,7 +451,14 @@ backend/
     ├── core/                   # config.py, db.py (engine + schema; QueuePool cho SQLite file/Postgres, StaticPool cho SQLite memory), job_store.py, auth.py, auth_store.py
     ├── models/                 # Pydantic: auth, job, translate, provider, glossary, settings
     ├── routers/                # auth, pdf, text, providers, glossary, settings (lớp HTTP)
-    ├── services/               # pdf_overlay, segment_merge (gộp mảnh câu + cắt bản dịch về từng bbox), translator, pipeline, cache, glossary, job_runner, app_settings, user_data, storage (object storage abstraction)
+    ├── services/               # translator, pipeline, cache, glossary, job_runner, app_settings, user_data, storage (object storage abstraction)
+    │   └── layout/             # ENGINE BỐ CỤC PDF
+    │       ├── model.py        # Block (đơn vị dịch) / Area (vùng rót bản dịch) / TextLine / Style
+    │       ├── analyze.py      # dòng -> vùng -> cột & thứ tự đọc -> khối trọn vẹn -> nối tràn cột/trang
+    │       ├── tables.py       # nhận vùng bảng (nền tô + nét kẻ + find_tables) và chia thành ô
+    │       ├── render.py       # xóa chữ gốc (bôi đen hoặc vá nền) + rót bản dịch, co chữ/mượn chỗ trống
+    │       └── fonts.py        # Tinos (serif) / Noto Sans (sans) / DejaVu (dự phòng), tự tránh thiếu glyph
+    ├── assets/fonts/           # 9 file .ttf: Tinos ×4, Noto Sans ×4, DejaVuSans
     └── providers/              # base, gemini, qwen, registry, quota_tracker
 
 backend/storage/                # dev cục bộ (khi DATABASE_URL/S3_BUCKET trống): uploads/, outputs/,
@@ -472,18 +535,16 @@ Không có nút chuyển đổi runtime — engine/backend storage được ch�
 
 ## Việc cần làm tiếp (TODO)
 
-0. **Đoạn bị cắt giữa câu — đã sửa cho VĂN XUÔI (2026-07-15).** Xem mục *Gộp mảnh câu* ở trên.
-   Phần cụt đầu còn lại **phần lớn là dòng bảng**, không phải văn xuôi: `_looks_like_table_block`
-   cắt bảng **theo dòng**, nên một ô bảng nhiều dòng vỡ thành nhiều mảnh
-   (`'• Includes a pre-IVM culture and the IVM culture'` / `'prior to IVM culture [88]'`). Gộp đúng
-   chúng cần biết ranh giới **ô**, không phải dòng → thuộc việc #1, không phải luật gộp câu. Số ít
-   ca văn xuôi còn lại chủ yếu do mạch đọc đứt vì khối chen giữa **bị bỏ do đè lên ảnh**
-   (`_overlaps_image`), nên khối liền trước kết thúc trọn câu và không có gì để nối.
-1. Kiểm thử thêm trên nhiều PDF y khoa 2 cột phức tạp, đặc biệt tài liệu scan/OCR kém hoặc bảng
-   nhiều tầng. Ưu tiên **xử lý bảng**, nay là nguồn lỗi cụt đoạn lớn nhất còn lại:
-   `_looks_like_table_block` (a) bỏ sót bảng có khối < 4 dòng — hàng bảng lọt ra thành khối văn xuôi
-   thường và bị gộp như văn xuôi, (b) cắt bảng theo **dòng** thay vì theo **ô**. Cân nhắc dùng
-   `page.find_tables()` của PyMuPDF thay cho heuristic hiện tại.
+0. **Chạy engine bố cục mới với API key thật** trên `01. tntc.pdf` rồi **mở PDF kết quả soi bằng
+   mắt**: bản dịch tiếng Việt thật dài hơn bao nhiêu so với bản giả 1,15× đã đo, có khối nào phải co
+   chữ quá tay không, và chất lượng dịch cải thiện ra sao khi đơn vị dịch nay là **đoạn trọn vẹn**.
+1. Kiểm thử engine trên nhiều kiểu PDF y khoa khác: tạp chí 2 cột, tài liệu scan/OCR kém, bảng nhiều
+   tầng (bảng lồng bảng / ô gộp). Các chỗ engine mới còn yếu, biết trước:
+   - Bảng **không có nền tô cũng không có nét kẻ** (chỉ căn cột bằng khoảng trắng) chưa nhận ra được.
+   - Ô bảng gộp nhiều cột (`colspan`) bị chia theo cụm x nên có thể tách nhầm.
+   - Một khối chỉ mang **một** kiểu chữ: đoạn có cụm in đậm mở đầu sẽ ra toàn chữ thường (đúng cấu
+     trúc, đúng câu, nhưng mất nhấn mạnh). Muốn giữ thì phải dựng lại kiểu chữ theo từng span, tức
+     phải tự ngắt dòng thay vì dùng `fill_textbox`.
 2. **Chạy E2E `gemini-3.5-flash-lite` với API key thật** (cache rỗng, `pedsinreview.2021005273.pdf`)
    để xác nhận `responseSchema` và độ ổn định stream SSE ở batch 200 đoạn — xem mục *Chưa kiểm thử*.
    Tiện thể chấm lại 14 đoạn mẫu để cập nhật bảng *Chất lượng dịch* cho model mới.

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from ..models.glossary import GlossaryEntry
 from .cache import SegmentCache
 from .glossary import apply_glossary_post, apply_glossary_pre
-from .segment_merge import TranslationUnit, distribute_translation
+from .layout import Block
 from ..providers.base import BaseProvider, ProviderBatchError, ProviderQuotaError
 from ..providers.quota_tracker import quota_tracker
 
@@ -97,7 +97,7 @@ class Translator:
 
     async def translate_units(
         self,
-        units: list[TranslationUnit],
+        units: list[Block],
         target_lang: str = "vi",
         on_progress=None,
         api_key: str | None = None,
@@ -105,10 +105,11 @@ class Translator:
     ) -> dict[str, str]:
         """Trả về ánh xạ block_id -> bản dịch.
 
-        Đơn vị dịch là câu ĐÃ GỘP (xem segment_merge), không phải từng bbox — nên cache được
-        đánh theo chữ đã gộp, và bản dịch được cắt trả về từng bbox ở cuối hàm.
+        Đơn vị dịch là một KHỐI trọn vẹn do engine bố cục dựng ra (đoạn văn, tiêu đề, ô bảng,
+        caption, nhãn hình) — không bao giờ là mảnh câu, nên bản dịch cũng không phải cắt lại.
+        Cache đánh theo nội dung khối.
 
-        Khử trùng lặp theo nội dung (nhiều đơn vị cùng chữ chỉ dịch 1 lần), ưu tiên cache,
+        Khử trùng lặp theo nội dung (nhiều khối cùng chữ chỉ dịch 1 lần), ưu tiên cache,
         gọi provider cho phần thiếu, ghi cache ngay. `on_progress(done, total)` gọi sau mỗi đoạn.
         """
         # gom các đoạn text duy nhất
@@ -153,12 +154,8 @@ class Translator:
             if on_progress:
                 on_progress(done, total)
 
-        translations: dict[str, str] = {}
-        for unit in units:
-            # Thiếu bản dịch (đơn vị rỗng) -> giữ nguyên chữ gốc, như hành vi cũ.
-            translated = text_to_translation.get(unit.text, unit.text)
-            translations.update(distribute_translation(unit, translated))
-        return translations
+        # Thiếu bản dịch (khối rỗng) -> giữ nguyên chữ gốc.
+        return {unit.id: text_to_translation.get(unit.text, unit.text) for unit in units}
 
     async def _translate_batch_with_split(
         self,
